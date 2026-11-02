@@ -1,0 +1,4 @@
+Class,n,Error_Detection_AUROC,CI_Low,CI_High
+Normal,54,0.8321,0.7075,0.9325
+CHF,58,0.8792,0.7743,0.9602
+Pneumonia,52,0.5682,0.4033,0.7189

@@ -1,0 +1,7 @@
+Target_Coverage,Confidence_Threshold,Actual_Coverage,Defer_Rate,AI_Handled,Deferred,Selective_Accuracy,Errors_Total,Errors_Captured_By_Defer,Error_Capture_Rate,Referral_Error_Precision
+1.0,-inf,1.0,0.0,164,0,0.6707,54,0,0.0,
+0.9,0.4856,0.9268,0.0732,152,12,0.6974,54,8,0.1481,0.6667
+0.8,0.5181,0.878,0.122,144,20,0.7083,54,12,0.2222,0.6
+0.7,0.5845,0.75,0.25,123,41,0.7724,54,26,0.4815,0.6341
+0.6,0.624,0.6646,0.3354,109,55,0.789,54,31,0.5741,0.5636
+0.5,0.6664,0.561,0.439,92,72,0.8152,54,37,0.6852,0.5139

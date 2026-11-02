@@ -1,0 +1,4 @@
+Rank,Arm,Val_AURC,Test_AURC
+1,Baseline,0.2131,0.1537
+2,Lesion-Supervised,0.2236,0.2225
+3,Gaze-Original,0.2551,0.2356

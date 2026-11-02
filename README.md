@@ -22,6 +22,9 @@ has not been verified.
 
 See [provenance](docs/provenance.md) for details.
 
+The uploaded notebook preserves cell sources; execution outputs and counts
+were removed from the upload copy. The reconstructed Python script is preserved unchanged.
+
 ## Experimental Design
 
 - Dataset: EGD-CXR linked to MIMIC-CXR-JPG
@@ -56,6 +59,9 @@ Historical result tables are available in
 - `results/reported/`: historical reported metrics
 - `docs/`: methodology, provenance, and figures
 
+See [methodology](docs/methodology.md) for the reported settings and
+[figure archive](docs/figures/) for figure availability.
+
 ## Data Access
 
 Dataset files are not included.
@@ -86,6 +92,9 @@ Prediction in Chest X-ray Classification.”
 동일한 결과가 재현되는지는 검증하지 않았습니다.
 
 자세한 출처와 복구 범위는 [복구 기록](docs/provenance.md)을 참고하세요.
+
+업로드한 초기 노트북은 셀 소스를 보존하고 실행 출력·실행 번호만 제거한 사본입니다.
+최종 복구 Python 스크립트는 제공받은 내용 그대로 보존했습니다.
 
 ## 실험 설계
 
@@ -122,6 +131,9 @@ Prediction in Chest X-ray Classification.”
 - `code/`: 확보된 초기 노트북과 대화 기반 실험 코드 복구본
 - `results/reported/`: 당시 보고된 평가 지표
 - `docs/`: 실험 방법, 복구 기록 및 그림
+
+세부 설정은 [실험 방법](docs/methodology.md), 그림 확보 상태는
+[그림 보관 폴더](docs/figures/)에서 확인할 수 있습니다.
 
 ## 데이터 접근
 

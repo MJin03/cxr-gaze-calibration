@@ -1,0 +1,30 @@
+{
+  "GazeOriginal_minus_Baseline_Macro_AUROC": {
+    "estimate": -0.0208,
+    "ci_low": -0.0574,
+    "ci_high": 0.018
+  },
+  "GazeOriginal_minus_Shuffled_ECE": {
+    "estimate": -0.1049,
+    "ci_low": -0.1488,
+    "ci_high": -0.0192
+  },
+  "Baseline_Error_Detection_AUROC": {
+    "estimate": 0.7692,
+    "ci_low": 0.6912,
+    "ci_high": 0.8414
+  },
+  "Baseline_E_AURC": 0.0914,
+  "Representative_Target_Coverage": 0.7,
+  "Representative_Test_Coverage": 0.75,
+  "Representative_Defer_Rate": 0.25,
+  "Representative_Selective_Accuracy": 0.7724,
+  "Representative_Total_Errors": 54,
+  "Representative_Errors_Captured": 26,
+  "Representative_Error_Capture_Rate": 0.4815,
+  "Representative_Error_Enrichment": {
+    "estimate": 1.93,
+    "ci_low": 1.54,
+    "ci_high": 2.43
+  }
+}
