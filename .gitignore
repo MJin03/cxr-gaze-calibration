@@ -218,3 +218,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Research datasets
+/data/
+
+# Model checkpoints
+/checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Credentials and local settings
+.env.*
+!.env.example
+.ssh/
+
+# OS files
+.DS_Store
+Thumbs.db
