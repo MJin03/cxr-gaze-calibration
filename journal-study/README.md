@@ -9,3 +9,19 @@
 3. **외부 평가** — VinDr-CXR에서 공통 소견을 평가한다. Emory 코호트는 접근 여부와 제공 라벨을 확인한 뒤 별도 재현 실험에 사용할 수 있다.
 
 후속 연구의 실행 코드는 [scripts/](scripts/), 실험 설정은 [configs/](configs/)에 둔다. 원본 영상, 시선 기록, 환자 단위 파일, 체크포인트와 실행 결과는 연구 서버에 저장한다. 이전 코드와 결과는 [이전 연구](../previous-study/README.md)에서 확인할 수 있다.
+
+## 서버 폴더 구조
+
+데이터는 연구 서버에만 두고 GitHub에는 올리지 않는다. 코드는 GitHub에서 서버로 받아 실행한다.
+
+```
+~/X-ray/
+├─ data/raw/
+│  ├─ egd-cxr/               # 시선, 라벨 (scripts/download_egd_cxr.sh)
+│  ├─ reflacx/               # 시선, 판독의 라벨
+│  ├─ mimic-cxr-jpg/         # EGD-CXR·REFLACX에 쓰인 영상만 선택 다운로드
+│  └─ vindr-cxr/             # 외부 검증
+└─ cxr-gaze-calibration/     # 이 저장소 (git clone)
+```
+
+서버 사양: RTX 3090 24GB × 1, 디스크 1.8TB.
