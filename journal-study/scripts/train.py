@@ -78,7 +78,7 @@ def build_table(args) -> tuple:
         df["class3_idx"] = df["class3"].map({c: i for i, c in enumerate(CLASS3)})
         targets = ["class3_idx"]
     if args.max_images:
-        df = df.groupby("split", group_keys=False).apply(lambda g: g.head(args.max_images))
+        df = df.groupby("split").head(args.max_images)
     return df.reset_index(drop=True), targets
 
 
