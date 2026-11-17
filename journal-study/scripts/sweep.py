@@ -1,7 +1,8 @@
 """개선 단계 실행·요약 도구 (ANALYSIS_PLAN.md 8절).
 
 단계
-    A  공통 학습 설정: Baseline(gaze none, avg pool)으로 backbone × 학습률을 고른다
+    A  공통 학습 설정: Baseline(gaze none, avg pool)으로 backbone × 학습률을 고른다 (입력 512)
+    A2 입력 크기 추가 확인: CheXpert 가중치는 224로 사전학습 → 224 입력과 더 높은 학습률 확인
     B  gaze 설정: A에서 고른 backbone·학습률로
          none     : pool {avg, attn}
          real     : pool {avg, attn} × λ {0.03, 0.1, 0.3, 1.0}
@@ -35,44 +36,50 @@ TRAIN = Path(__file__).parent / "train.py"
 SCHEDULE = "cosine"
 
 
-def tag(bb, lr, pool, lam):
-    return f"bb-{bb}_lr{lr:g}_sch-{SCHEDULE}_pool-{pool}_lam{lam:g}"
+def tag(bb, lr, pool, lam, size=512):
+    t = f"bb-{bb}_lr{lr:g}_sch-{SCHEDULE}_pool-{pool}_lam{lam:g}"
+    return t + (f"_sz{size}" if size != 512 else "")
 
 
 def configs(args):
     """(gaze, backbone, lr, pool, lam) 목록과 seed 목록."""
     if args.stage == "A":
-        cfg = [("none", bb, lr, "avg", 0.0) for bb in ["imagenet", "chexpert"] for lr in [1e-4, 3e-5]]
+        cfg = [("none", bb, lr, "avg", 0.0, 512) for bb in ["imagenet", "chexpert"] for lr in [1e-4, 3e-5]]
+        return cfg, args.seeds or [0, 1, 2]
+    if args.stage == "A2":
+        cfg = [("none", "imagenet", 1e-4, "avg", 0.0, 224), ("none", "chexpert", 1e-4, "avg", 0.0, 224),
+               ("none", "chexpert", 3e-4, "avg", 0.0, 224), ("none", "chexpert", 3e-4, "avg", 0.0, 512)]
         return cfg, args.seeds or [0, 1, 2]
     if args.stage == "B":
-        cfg = [("none", args.backbone, args.lr, p, 0.0) for p in ["avg", "attn"]]
-        cfg += [(g, args.backbone, args.lr, p, lam) for g in ["real", "shuffled"]
+        cfg = [("none", args.backbone, args.lr, p, 0.0, args.size) for p in ["avg", "attn"]]
+        cfg += [(g, args.backbone, args.lr, p, lam, args.size) for g in ["real", "shuffled"]
                 for p in ["avg", "attn"] for lam in [0.03, 0.1, 0.3, 1.0]]
         return cfg, args.seeds or [0, 1, 2]
     cfg = []
     for item in args.choice:
         g, rest = item.split("=")
         pool, lam = rest.split(",")
-        cfg.append((g, args.backbone, args.lr, pool, float(lam)))
+        cfg.append((g, args.backbone, args.lr, pool, float(lam), args.size))
     return cfg, args.seeds or list(range(10))
 
 
-def run_dir(g, bb, lr, pool, lam, seed):
-    return RUNS / f"findings_gaze-{g}_t3_seed{seed}_{tag(bb, lr, pool, lam)}"
+def run_dir(g, bb, lr, pool, lam, size, seed):
+    return RUNS / f"findings_gaze-{g}_t3_seed{seed}_{tag(bb, lr, pool, lam, size)}"
 
 
 def do_run(args):
     cfg, seeds = configs(args)
     jobs = [(c, s) for c in cfg for s in seeds]
     print(f"단계 {args.stage}: 설정 {len(cfg)}개 × seed {len(seeds)}개 = {len(jobs)}회")
-    for k, ((g, bb, lr, pool, lam), s) in enumerate(jobs, 1):
-        if (run_dir(g, bb, lr, pool, lam, s) / "preds_test.csv").exists():
-            print(f"[{k}/{len(jobs)}] 건너뜀 (이미 있음): {g} {tag(bb, lr, pool, lam)} seed {s}")
+    for k, ((g, bb, lr, pool, lam, size), s) in enumerate(jobs, 1):
+        t = tag(bb, lr, pool, lam, size)
+        if (run_dir(g, bb, lr, pool, lam, size, s) / "preds_test.csv").exists():
+            print(f"[{k}/{len(jobs)}] 건너뜀 (이미 있음): {g} {t} seed {s}")
             continue
-        print(f"\n[{k}/{len(jobs)}] {g} {tag(bb, lr, pool, lam)} seed {s}", flush=True)
+        print(f"\n[{k}/{len(jobs)}] {g} {t} seed {s}", flush=True)
         cmd = [sys.executable, str(TRAIN), "--task", "findings", "--gaze", g, "--seed", str(s),
                "--backbone", bb, "--lr", str(lr), "--schedule", SCHEDULE, "--pool", pool,
-               "--gaze-weight", str(lam), "--tag", tag(bb, lr, pool, lam)] + args.extra.split()
+               "--gaze-weight", str(lam), "--img-size", str(size), "--tag", t] + args.extra.split()
         r = subprocess.run(cmd)
         if r.returncode != 0:
             print(f"  [오류] 이 run이 실패했습니다 (returncode {r.returncode}). 다음으로 넘어갑니다.")
@@ -80,15 +87,18 @@ def do_run(args):
 
 def do_report(args):
     cfg, seeds = configs(args)
+    if args.stage == "A2":  # A와 A2를 한 표에서 비교
+        a = argparse.Namespace(**{**vars(args), "stage": "A"})
+        cfg = configs(a)[0] + cfg
     rows = []
-    for (g, bb, lr, pool, lam) in cfg:
+    for (g, bb, lr, pool, lam, size) in cfg:
         for s in seeds:
-            d = run_dir(g, bb, lr, pool, lam, s)
+            d = run_dir(g, bb, lr, pool, lam, size, s)
             if not (d / "val_metrics.json").exists():
                 continue
             m = json.load(open(d / "val_metrics.json"))
             h = pd.read_csv(d / "history.csv")
-            rows.append({"gaze": g, "backbone": bb, "lr": lr, "pool": pool, "lam": lam, "seed": s,
+            rows.append({"gaze": g, "backbone": bb, "lr": lr, "size": size, "pool": pool, "lam": lam, "seed": s,
                          "val_score": (m["pleural_auroc"] + m["cardiac_auroc"]) / 2,
                          "pleural": m["pleural_auroc"], "cardiac": m["cardiac_auroc"], "edema": m["edema_auroc"],
                          "val_loss": h.val_cls_loss.min(), "best_epoch": m["best_epoch"],
@@ -97,7 +107,7 @@ def do_report(args):
         print("결과가 없습니다.")
         return
     r = pd.DataFrame(rows)
-    keys = ["gaze", "backbone", "lr", "pool", "lam"]
+    keys = ["gaze", "backbone", "lr", "size", "pool", "lam"]
     agg = r.groupby(keys).agg(n=("seed", "size"), score=("val_score", "mean"), score_sd=("val_score", "std"),
                               pleural=("pleural", "mean"), cardiac=("cardiac", "mean"), edema=("edema", "mean"),
                               val_loss=("val_loss", "mean"), best_epoch=("best_epoch", "mean"),
@@ -113,16 +123,17 @@ def do_report(args):
     print("\n=== 조건별 선택 (score 최고, 같으면 val loss 낮은 쪽)")
     for g, d in agg.groupby("gaze"):
         b = d.iloc[0]
-        print(f"  {g:9s} backbone={b.backbone} lr={b.lr} pool={b.pool} λ={b.lam:g} → score {b.score:.4f} ± {b.score_sd:.4f} (n={b.n})")
+        print(f"  {g:9s} backbone={b.backbone} lr={b.lr} size={b["size"]} pool={b.pool} λ={b.lam:g} → score {b.score:.4f} ± {b.score_sd:.4f} (n={b.n})")
     print(f"\n저장: {out}")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["run", "report"])
-    ap.add_argument("--stage", choices=["A", "B", "C"], required=True)
+    ap.add_argument("--stage", choices=["A", "A2", "B", "C"], required=True)
     ap.add_argument("--backbone", choices=["imagenet", "chexpert"])
     ap.add_argument("--lr", type=float)
+    ap.add_argument("--size", type=int, default=512, help="단계 B·C의 입력 크기 (A2에서 고른 값)")
     ap.add_argument("--choice", nargs="*", default=[])
     ap.add_argument("--seeds", type=int, nargs="*")
     ap.add_argument("--extra", default="", help='train.py에 그대로 넘길 인자. 예: "--max-images 64 --epochs 1"')

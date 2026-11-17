@@ -77,6 +77,10 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
 - A. 공통 학습 설정 (Baseline으로 선택, seed 0~2)
   - backbone: ImageNet DenseNet-121 / CheXpert 사전학습 DenseNet-121 (torchxrayvision densenet121-res224-chex, MIMIC-CXR 미포함)
   - 학습률: 1e-4 / 3e-5, cosine schedule (1 epoch warmup)
+- A2. (A 결과 확인 후 추가, 2026-11-17) CheXpert 가중치가 512 입력에서 ImageNet보다 크게 낮고 학습이 느렸음(best epoch 13~15).
+  CheXpert 가중치는 224로 사전학습되어 입력 크기 차이가 원인일 수 있어 다음을 추가 확인한다 (seed 0~2):
+  ImageNet 224 lr 1e-4, CheXpert 224 lr 1e-4, CheXpert 224 lr 3e-4, CheXpert 512 lr 3e-4.
+  A와 A2 전체에서 같은 기준으로 하나를 고른다. 224를 고르면 gaze heatmap은 512에서 평균으로 줄여 쓴다.
 - B. gaze 설정 (A에서 고른 backbone·학습률, seed 0~2)
   - none: pool {avg, attn(비지도 attention pooling)}
   - real, shuffled: pool {avg, attn(gaze로 학습한 attention pooling)} × λ {0.03, 0.1, 0.3, 1.0}

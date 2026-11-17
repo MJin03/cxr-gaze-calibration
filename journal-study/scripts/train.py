@@ -114,6 +114,8 @@ class CXRDataset(Dataset):
         has_gaze = isinstance(r.gaze_src, str)
         hm = (torch.from_numpy(np.load(self.hm_dir / f"{r.gaze_src}.npy").astype(np.float32))[None]
               if has_gaze else torch.zeros(1, self.size, self.size))
+        if hm.shape[-1] != self.size:  # heatmap은 512로 만들어 두었으므로 입력 크기에 맞게 줄인다
+            hm = F.adaptive_avg_pool2d(hm[None], self.size)[0]
         if self.train:
             angle = random.uniform(-5, 5)
             shift = [int(random.uniform(-0.03, 0.03) * self.size) for _ in range(2)]
@@ -293,7 +295,7 @@ def main() -> None:
     df["gaze_src"] = gaze_source(df, args)
     names = FINDINGS if args.task == "findings" else CLASS3
     img_dir = PROC / f"images_{args.img_size}"
-    hm_dir = PROC / f"heatmaps_{args.img_size}_s7"
+    hm_dir = PROC / "heatmaps_512_s7"
     parts = {s: df[df.split == s] for s in ["train", "val", "test"]}
     print(f"[{name}] device={device}, train {len(parts['train'])} / val {len(parts['val'])} / test {len(parts['test'])}")
     if args.gaze != "none":
