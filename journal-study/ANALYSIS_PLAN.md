@@ -84,7 +84,14 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
 - B. gaze 설정 (A에서 고른 backbone·학습률, seed 0~2)
   - none: pool {avg, attn(비지도 attention pooling)}
   - real, shuffled: pool {avg, attn(gaze로 학습한 attention pooling)} × λ {0.03, 0.1, 0.3, 1.0}
-- C. 조건별로 고른 설정을 seed 0~9로 학습 → 내부 test 평가 (사후, 1~7절과 같은 지표), seed 10개 앙상블 포함
+- A·A2 결과: ImageNet, 512, 학습률 1e-4, cosine 선택 (val score 0.884). CheXpert는 224에서 0.881로 근접했으나
+  선택 기준상 2위이고, 224에서는 gaze가 7×7로 축소되어 이 연구 목적에 맞지 않음
+- B 결과 (seed 0~2): 규칙상 선택 none avg (0.884), real avg λ0.03 (0.888), shuffled avg λ0.03 (0.888).
+  gaze가 판단 위치에 직접 관여하는 attention pooling에서는 real이 shuffled보다 높음 (λ0.3: 0.879 vs 0.856, λ1.0: 0.878 vs 0.859)
+- C. 조건별 설정을 seed 0~9로 학습 → 내부 test 평가 (사후, 1~7절과 같은 지표), seed 10개 앙상블 포함
+  - C1 (주 비교): B의 선택 규칙대로 고른 설정 — none avg / real avg λ0.03 / shuffled avg λ0.03
+  - C2 (보조 비교, B 결과를 보고 추가): gaze가 판단 위치를 정하는 같은 구조에서 진짜 시선의 정보 효과 확인 —
+    none attn / real attn λ0.3 / shuffled attn λ0.3 (λ는 real의 val 최고값, 세 조건에 동일 적용)
 - D. VinDr-CXR test 외부 검증 (최종 확인)
 - E. 이전 연구(IWAIT 2027), 사전 고정 설정 결과, 개선 설정 결과 비교
 

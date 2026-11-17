@@ -9,7 +9,14 @@
     subgroups.csv        AP/PA, landscape/portrait
     metadata_baseline.csv, reader_disagreement.csv
 
-사용법  python evaluate.py [--threshold 3] [--n-boot 2000]
+사용법
+    python evaluate.py                                    # 사전 고정 결과 (seed 0~4, 태그 없음)
+    python evaluate.py --name eval_C1 --seeds 0 1 2 3 4 5 6 7 8 9 \
+        --tags none=bb-imagenet_lr0.0001_sch-cosine_pool-avg_lam0 real=... shuffled=...
+
+신뢰구간 두 가지 (comparisons.csv)
+    ci_low/ci_high     test 환자만 다시 뽑는 bootstrap (사전 계획)
+    ci2_low/ci2_high   test 환자 + 조건별 seed를 함께 다시 뽑는 bootstrap (학습 변동 반영, 8절 추가)
 """
 import argparse
 import json
@@ -24,6 +31,7 @@ from sklearn.metrics import roc_auc_score
 HOME = Path.home() / "X-ray"
 PROC, RUNS = HOME / "data/processed", HOME / "runs"
 CONDS, SEEDS = ["none", "real", "shuffled"], [0, 1, 2, 3, 4]
+TAGS = {c: "" for c in ["none", "real", "shuffled"]}
 FINDINGS, PRIMARY_F = ["pleural", "cardiac", "edema"], ["pleural", "cardiac"]
 RATES, PRIMARY_RATE = [0.10, 0.25, 0.30, 0.50], 0.25
 CURVE = np.round(np.arange(0, 0.91, 0.05), 2)
@@ -41,7 +49,7 @@ def load_runs(th: int) -> dict:
     runs, test_ids = {}, None
     for c in CONDS:
         for s in SEEDS:
-            d = RUNS / f"findings_gaze-{c}_t{th}_seed{s}"
+            d = RUNS / (f"findings_gaze-{c}_t{th}_seed{s}" + (f"_{TAGS[c]}" if TAGS[c] else ""))
             v = pd.read_csv(d / "preds_val.csv").sort_values("dicom_id").reset_index(drop=True)
             t = pd.read_csv(d / "preds_test.csv").sort_values("dicom_id").reset_index(drop=True)
             temp = json.load(open(d / "temperature.json"))
@@ -54,7 +62,7 @@ def load_runs(th: int) -> dict:
                             for f in FINDINGS}
     for c in CONDS:  # seed 5개 앙상블: 보정된 확률의 평균
         runs[(c, "ens")] = {f: {k: np.mean([runs[(c, s)][f][k] for s in SEEDS], axis=0)
-                                if k.startswith("p") else runs[(c, 0)][f][k]
+                                if k.startswith("p") else runs[(c, SEEDS[0])][f][k]
                                 for k in ["pv", "yv", "pt", "yt", "pt_raw"]} for f in FINDINGS}
     return runs, test_ids
 
@@ -121,26 +129,33 @@ def run_metrics(r):
 
 # ------------------------------------------------------------ bootstrap
 def bootstrap(runs, test_ids, n_boot, seed=0):
+    """환자 bootstrap과 환자+seed bootstrap을 함께 계산한다.
+    diff  : 모든 seed 평균의 차이 (환자만 다시 뽑음)
+    diff2 : 조건마다 seed도 복원추출한 평균의 차이 (학습 변동까지 반영)"""
     rng = np.random.default_rng(seed)
     pats, pidx = np.unique(test_ids.subject_id.values, return_inverse=True)
     arrays = {(c, s, f, rate): referral_arrays(runs[(c, s)][f]["pv"], runs[(c, s)][f]["pt"], runs[(c, s)][f]["yt"], rate)
               for c in CONDS for s in SEEDS for f in FINDINGS for rate in RATES}
+    n_s = len(SEEDS)
     recs = []
     for b in range(n_boot):
         w = np.bincount(rng.integers(0, len(pats), len(pats)), minlength=len(pats))[pidx].astype(float)
+        pick = {c: rng.integers(0, n_s, n_s) for c in CONDS}
         for f in FINDINGS:
-            vals = {}
+            per_seed = {}
             for c in CONDS:
-                yt = runs[(c, 0)][f]["yt"]
-                vals[(c, "auroc")] = np.mean([roc_auc_score(yt, runs[(c, s)][f]["pt"], sample_weight=w) for s in SEEDS])
+                yt = runs[(c, SEEDS[0])][f]["yt"]
+                per_seed[(c, "auroc")] = np.array([roc_auc_score(yt, runs[(c, s)][f]["pt"], sample_weight=w) for s in SEEDS])
                 for rate in RATES:
                     ms = [referral_metrics(arrays[(c, s, f, rate)], w) for s in SEEDS]
                     for k in ["missed_pos_rate", "fn_count", "fn_rate_handled"]:
-                        vals[(c, f"{k}@{int(rate * 100)}")] = np.mean([m[k] for m in ms])
+                        per_seed[(c, f"{k}@{int(rate * 100)}")] = np.array([m[k] for m in ms])
             for a, bb in COMPARE:
-                for metric in {m for _, m in vals}:
+                for metric in {m for _, m in per_seed}:
+                    va, vb = per_seed[(a, metric)], per_seed[(bb, metric)]
                     recs.append({"finding": f, "comparison": f"{a}-{bb}", "metric": metric, "b": b,
-                                 "diff": vals[(a, metric)] - vals[(bb, metric)]})
+                                 "diff": va.mean() - vb.mean(),
+                                 "diff2": va[pick[a]].mean() - vb[pick[bb]].mean()})
         if (b + 1) % 200 == 0:
             print(f"  bootstrap {b + 1}/{n_boot}")
     return pd.DataFrame(recs)
@@ -155,11 +170,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--threshold", type=int, default=3)
     ap.add_argument("--n-boot", type=int, default=2000)
+    ap.add_argument("--seeds", type=int, nargs="*", default=[0, 1, 2, 3, 4])
+    ap.add_argument("--tags", nargs="*", default=[], help="조건=태그 (sweep.py가 붙인 run 이름 뒤쪽)")
+    ap.add_argument("--name", default="", help="결과 폴더 이름 (기본 eval_t{threshold})")
     args = ap.parse_args()
-    out = HOME / f"results/eval_t{args.threshold}"
+    global SEEDS
+    SEEDS = list(args.seeds)
+    for item in args.tags:
+        c, t = item.split("=", 1)
+        TAGS[c] = t
+    out = HOME / "results" / (args.name or f"eval_t{args.threshold}")
     out.mkdir(parents=True, exist_ok=True)
 
     runs, test_ids = load_runs(args.threshold)
+    print(f"[{out.name}] seed {SEEDS}, 태그 {TAGS}")
     print(f"test {len(test_ids)}장, 환자 {test_ids.subject_id.nunique()}명")
 
     # 1. 실행별 지표
@@ -183,8 +207,10 @@ def main():
                 d = seeds_only[(seeds_only.finding == f)]
                 est = d[d.cond == a][col].mean() - d[d.cond == b][col].mean()
                 bd = boot[(boot.finding == f) & (boot.comparison == f"{a}-{b}") & (boot.metric == metric)]["diff"]
+                bd2 = boot[(boot.finding == f) & (boot.comparison == f"{a}-{b}") & (boot.metric == metric)]["diff2"]
                 point.append({"finding": f, "comparison": f"{a}-{b}", "metric": metric, "estimate": est,
-                              "ci_low": bd.quantile(0.025), "ci_high": bd.quantile(0.975)})
+                              "ci_low": bd.quantile(0.025), "ci_high": bd.quantile(0.975),
+                              "ci2_low": bd2.quantile(0.025), "ci2_high": bd2.quantile(0.975)})
     comp = pd.DataFrame(point)
     comp.to_csv(out / "comparisons.csv", index=False)
 
@@ -221,7 +247,7 @@ def main():
                     mm = referral_metrics(a)
                     mm["auroc"] = roc_auc_score(r["yt"][m], r["pt"][m]) if len(set(r["yt"][m])) > 1 else np.nan
                     vals.append(mm)
-                sub.append({"group": gname, "n": int(m.sum()), "positives": int(runs[(c, 0)][f]["yt"][m].sum()),
+                sub.append({"group": gname, "n": int(m.sum()), "positives": int(runs[(c, SEEDS[0])][f]["yt"][m].sum()),
                             "cond": c, "finding": f, **{k: np.mean([v[k] for v in vals]) for k in vals[0]}})
     pd.DataFrame(sub).to_csv(out / "subgroups.csv", index=False)
 
@@ -266,8 +292,8 @@ def main():
         for a, b in COMPARE:
             r = comp[(comp.finding == f) & (comp.comparison == f"{a}-{b}") & (comp.metric == "missed_pos_rate@25")].iloc[0]
             r2 = comp[(comp.finding == f) & (comp.comparison == f"{a}-{b}") & (comp.metric == "auroc")].iloc[0]
-            print(f"  {a}−{b}: missed {r.estimate:+.3f} [{r.ci_low:+.3f}, {r.ci_high:+.3f}] | "
-                  f"AUROC {r2.estimate:+.3f} [{r2.ci_low:+.3f}, {r2.ci_high:+.3f}]")
+            print(f"  {a}−{b}: missed {r.estimate:+.3f} 환자CI [{r.ci_low:+.3f}, {r.ci_high:+.3f}] 환자+seed CI [{r.ci2_low:+.3f}, {r.ci2_high:+.3f}] | "
+                  f"AUROC {r2.estimate:+.3f} 환자CI [{r2.ci_low:+.3f}, {r2.ci_high:+.3f}] 환자+seed CI [{r2.ci2_low:+.3f}, {r2.ci2_high:+.3f}]")
     print("\n=== 메타데이터 기준선 AUROC (촬영 방향 + 사진 모양만)")
     print(pd.DataFrame(meta).round(3).to_string(index=False))
     print(f"\n저장: {out}")
