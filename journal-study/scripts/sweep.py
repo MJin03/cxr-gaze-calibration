@@ -123,7 +123,7 @@ def do_report(args):
     print("\n=== 조건별 선택 (score 최고, 같으면 val loss 낮은 쪽)")
     for g, d in agg.groupby("gaze"):
         b = d.iloc[0]
-        print(f"  {g:9s} backbone={b.backbone} lr={b.lr} size={b["size"]} pool={b.pool} λ={b.lam:g} → score {b.score:.4f} ± {b.score_sd:.4f} (n={b.n})")
+        print(f"  {g:9s} backbone={b.backbone} lr={b.lr} size={b['size']} pool={b.pool} λ={b.lam:g} → score {b.score:.4f} ± {b.score_sd:.4f} (n={b.n})")
     print(f"\n저장: {out}")
 
 
