@@ -10,6 +10,13 @@ Baseline과 gaze 모델이 완전히 같은 코드로 돌도록 --gaze 옵션 �
     --task findings  pleural abnormality, enlarged cardiac silhouette, pulmonary edema (multi-label)
     --task class3    이전 연구 재현용 EGD 3분류 (정상/CHF/폐렴), 이전 연구 split 사용, gaze none만
 
+개선 옵션 (2026-11-17 추가)
+    --backbone imagenet|chexpert   chexpert = torchxrayvision densenet121-res224-chex (CheXpert로만 사전학습,
+                                   MIMIC-CXR 미포함 → test 누수 없음). 1채널, [-1024, 1024] 정규화
+    --schedule constant|cosine     cosine = 1 epoch warmup 후 cosine 감소
+    --pool avg|attn                attn = 1×1 conv 위치 분포로 feature를 가중 평균해 분류 (gaze 조건이면 그 분포를 gaze로 학습)
+    --tag 문자열                    run 이름 뒤에 붙는 설정 표시 (sweep.py가 자동으로 붙임)
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -121,7 +128,6 @@ class CXRDataset(Dataset):
             s = hm.sum()
             hm = hm / s if s > 0 else hm
             has_gaze = bool(s > 0)
-        img = TF.normalize(img.expand(3, -1, -1), MEAN, STD)
         if self.task == "findings":
             y = torch.tensor([float(r[t]) for t in self.targets])
         else:
@@ -137,17 +143,33 @@ def seed_worker(_):
 
 # ---------------------------------------------------------------- 모델
 class Net(nn.Module):
-    def __init__(self, n_out: int, pretrained: bool):
+    def __init__(self, n_out: int, backbone: str, pretrained: bool, pool: str):
         super().__init__()
-        base = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None)
+        self.backbone, self.pool = backbone, pool
+        if backbone == "chexpert":
+            import torchxrayvision as xrv
+            base = xrv.models.DenseNet(weights="densenet121-res224-chex" if pretrained else None)
+        else:
+            base = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None)
         self.features = base.features
         self.head = nn.Linear(1024, n_out)
         self.gaze_head = nn.Conv2d(1024, 1, kernel_size=1)
+        self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
+        self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
 
-    def forward(self, x):
+    def forward(self, x):  # x: B×1×H×W, 0~1
+        if self.backbone == "chexpert":
+            x = x * 2048 - 1024
+        else:
+            x = (x.expand(-1, 3, -1, -1) - self.mean) / self.std
         f = F.relu(self.features(x))
-        logits = self.head(F.adaptive_avg_pool2d(f, 1).flatten(1))
-        return logits, self.gaze_head(f)
+        att = self.gaze_head(f)
+        if self.pool == "attn":
+            w = torch.softmax(att.flatten(2), dim=-1)            # B×1×HW
+            pooled = (f.flatten(2) * w).sum(-1)                   # B×1024
+        else:
+            pooled = F.adaptive_avg_pool2d(f, 1).flatten(1)
+        return self.head(pooled), att
 
 
 def cls_loss(logits, y, task):
@@ -243,6 +265,10 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--img-size", type=int, default=512)
     ap.add_argument("--no-pretrained", action="store_true")
+    ap.add_argument("--backbone", choices=["imagenet", "chexpert"], default="imagenet")
+    ap.add_argument("--schedule", choices=["constant", "cosine"], default="constant")
+    ap.add_argument("--pool", choices=["avg", "attn"], default="avg")
+    ap.add_argument("--tag", default="")
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용: 세트마다 앞에서 N장만")
     ap.add_argument("--run-name", default="")
     ap.add_argument("--out-root", type=Path, default=HOME / "runs")
@@ -251,7 +277,8 @@ def main() -> None:
     if args.task == "class3" and args.gaze != "none":
         raise SystemExit("class3 재현 확인은 --gaze none 으로만 실행합니다.")
 
-    name = args.run_name or f"{args.task}_gaze-{args.gaze}_t{args.threshold}_seed{args.seed}"
+    name = args.run_name or (f"{args.task}_gaze-{args.gaze}_t{args.threshold}_seed{args.seed}"
+                             + (f"_{args.tag}" if args.tag else ""))
     out = args.out_root / name
     if (out / "best.pt").exists() and not args.overwrite:
         raise SystemExit(f"{out} 에 이미 결과가 있습니다. 다시 돌리려면 --overwrite")
@@ -275,13 +302,18 @@ def main() -> None:
     g = torch.Generator().manual_seed(args.seed)
     mk = lambda d, tr: DataLoader(CXRDataset(d, targets, args.task, img_dir, hm_dir, tr, args.img_size),
                                   batch_size=args.batch_size if tr else args.batch_size * 2, shuffle=tr,
-                                  num_workers=args.workers, pin_memory=amp, drop_last=tr,
+                                  num_workers=args.workers, pin_memory=amp, drop_last=tr and len(d) > args.batch_size,
                                   worker_init_fn=seed_worker, generator=g if tr else None,
                                   persistent_workers=args.workers > 0)
     tr_loader, va_loader, te_loader = mk(parts["train"], True), mk(parts["val"], False), mk(parts["test"], False)
 
-    model = Net(len(names), pretrained=not args.no_pretrained).to(device)
+    model = Net(len(names), args.backbone, not args.no_pretrained, args.pool).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    steps_per_epoch = max(len(tr_loader), 1)
+    total, warm = args.epochs * steps_per_epoch, steps_per_epoch
+    lr_lambda = (lambda i: min(1.0, (i + 1) / warm) * 0.5 * (1 + math.cos(math.pi * min(i, total) / total))
+                 if args.schedule == "cosine" else 1.0)
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
     scaler = torch.amp.GradScaler(device.type, enabled=amp)
 
     try:
@@ -315,6 +347,7 @@ def main() -> None:
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
+            sched.step()
             sums += [loss.item(), lc.item(), lg.item()]
             n += 1
         v_logits, _ = predict(model, va_loader, device, amp)

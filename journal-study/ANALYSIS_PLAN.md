@@ -60,3 +60,29 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
 - 주 지표 결론은 real − none, real − shuffled 차이의 신뢰구간으로 판단한다
 - 보조·하위 분석은 탐색적 결과로 보고한다
 - test 결과를 본 뒤 학습 설정, 라벨 기준, threshold 방식을 바꾸지 않는다
+
+## 8. 추가 분석: 설정 개선 (2026-11-17 추가, 내부 test 확인 이후)
+
+1~7절의 사전 고정 결과를 확인한 뒤 추가한다. 내부 test 결과는 이미 보았으므로 아래 결과는 **사후(post-hoc) 분석**으로 표시해 보고하고,
+최종 확인은 한 번도 보지 않은 VinDr-CXR test로 한다. 1~7절의 결과는 그대로 함께 보고한다.
+
+목표: 이전 연구 설정을 따르지 않고, 공정한 조건에서 각 조건이 낼 수 있는 가장 좋은 성능끼리 비교한다.
+
+원칙
+- 설정 선택은 val로만 한다. 선택 기준(모든 조건 동일): val AUROC(흉막 + 심장비대 평균)의 seed 평균 최고, 같으면 val 분류 loss 낮은 쪽
+- none, real, shuffled는 같은 범위로 조정한다
+- 시도한 설정은 모두 보고한다 (results/sweep_stage*.csv)
+
+단계
+- A. 공통 학습 설정 (Baseline으로 선택, seed 0~2)
+  - backbone: ImageNet DenseNet-121 / CheXpert 사전학습 DenseNet-121 (torchxrayvision densenet121-res224-chex, MIMIC-CXR 미포함)
+  - 학습률: 1e-4 / 3e-5, cosine schedule (1 epoch warmup)
+- B. gaze 설정 (A에서 고른 backbone·학습률, seed 0~2)
+  - none: pool {avg, attn(비지도 attention pooling)}
+  - real, shuffled: pool {avg, attn(gaze로 학습한 attention pooling)} × λ {0.03, 0.1, 0.3, 1.0}
+- C. 조건별로 고른 설정을 seed 0~9로 학습 → 내부 test 평가 (사후, 1~7절과 같은 지표), seed 10개 앙상블 포함
+- D. VinDr-CXR test 외부 검증 (최종 확인)
+- E. 이전 연구(IWAIT 2027), 사전 고정 설정 결과, 개선 설정 결과 비교
+
+통계 보완: 차이의 신뢰구간에 seed 변동을 반영하기 위해 seed와 test 환자를 함께 다시 뽑는 bootstrap을 추가한다 (1~7절 결과에도 함께 적용해 보고).
+gaze heatmap sigma는 조정하지 않는다 (모델이 16×16으로 줄여 쓰므로 영향이 작음).
