@@ -196,3 +196,38 @@ VinDr-CXR test는 지금까지 한 번도 예측하지 않았다 (label 개수�
   처음 W장 동안은 내부 val 분포로 시작하므로 referral이 25%에서 약간 벗어날 수 있음
 코드: scripts/evaluate_rolling.py
 
+## 11. 추가 연구: 시선 난이도로 보정 개선 (2026-11-19, 학습 전에 고정)
+
+배경 (사후 확인 결과): 8~10절의 모든 조건에서 temperature scaling 전후 ECE가 seed 변동 안에서 비슷했다
+(gaze는 보정을 개선하지 않음, IWAIT 주장 재현 안 됨). 또 내부 val로 맞춘 temperature가 VinDr에서는 ECE를 오히려 키웠다
+(흉막 raw 0.027~0.028 → TS 후 0.042~0.044). fs는 "어디를 볼지"를 가르치고 "얼마나 확신할지"는 가르치지 않는다.
+→ 시선으로 "얼마나 확신할지"를 가르치는 방법을 새로 검증한다. 내부 test와 VinDr test는 이미 보았으므로
+주 판정은 한 번도 보지 않은 CheXpert test에서 한다.
+
+1. 시선 난이도 d (scripts/build_gaze_difficulty.py, train·val만)
+- finding별 시선 창(8절 C3과 같은 3초 창, 같은 단어 세트 v3)에서 세 특징: 창 안에 머문 시간 합, 창 개수(다시 말한 횟수),
+  고정점 위치의 퍼짐(머문 시간 가중 표준편차, 영상 크기로 나눔)
+- (finding, label, 데이터셋) 묶음 안에서 각 특징을 백분위로 → 세 백분위 평균을 다시 백분위로 → d ∈ (0, 1]
+  (label 자체와 EGD·REFLACX 녹취 길이 차이가 난이도에 섞이지 않게). 그 finding을 말하지 않은 영상은 d = 0.5
+- 판독의 확신도 난이도 u (REFLACX): 양성(확신도 3~5) u = (5 − 확신도)/2, 음성(0~2) u = 확신도/2, EGD만 있는 영상 0.5
+
+2. 모델과 조건 (기반: fs, hybrid3, λ0.3, ImageNet, lr 1e-4, cosine, 512 — 8절과 같음)
+- 학습 target = y(1 − ε) + ε/2, ε = ε_max × 난이도 (train 영상만, val·test label과 early stopping·temperature는 정답 label 그대로)
+- A gaze (제안): 난이도 = d / B gaze-shuffled (대조): 다른 환자의 d (8절과 같은 셔플 매핑)
+  C certainty (비교): 난이도 = u / D uniform (비교): 난이도 = 0.5 (A와 같은 평균 강도의 일반 smoothing)
+- 기준: smoothing 없는 fs (8절), C1 none (avg)
+- ε_max {0.05, 0.1, 0.2} × seed 0~2. 조건마다 val NLL(temperature 전 val 분류 loss) seed 평균이 가장 낮은 ε_max 선택,
+  같으면 val AUROC(흉막·심장비대 평균) 높은 쪽 → seed 0~9로 학습 (scripts/sweep_smooth.py)
+
+3. 평가
+- 주 판정 데이터: CheXpert test (전문의 합의 label, 한 번도 보지 않음). label 대응과 세부 사항은 데이터 확인 후,
+  예측 전에 이 절에 추가로 고정한다. 보조: VinDr test (새 조건은 처음 평가하지만, 이 방향을 VinDr 보정 결과를 보고 정했으므로 보조),
+  내부 test (사후)
+- 주 지표: temperature scaling 없이 잰 calibration slope (예측 logit에 대한 로지스틱 재보정 기울기, 1이 이상적)와 NLL
+- 보조: calibration intercept, ECE(raw·TS 후), Brier, AUROC(판별력이 떨어지지 않는지), 자동 문턱(10절) missed
+- 주 비교: A − D (일반 smoothing 대비 시선 난이도의 효과), A − B (시선 내용 효과).
+  보조: A − C, A − fs(smoothing 없음), A − C1 none
+- 신뢰구간: 영상(내부는 환자) + seed bootstrap 2000회 (ci2)
+- 해석: A가 D와 B보다 calibration slope가 1에 유의하게 가깝고 NLL이 낮으며 AUROC가 떨어지지 않으면
+  "시선 난이도가 보정을 개선한다"고 판정. 결과와 관계없이 8~10절의 "fs는 보정을 개선하지 않음"은 그대로 보고
+

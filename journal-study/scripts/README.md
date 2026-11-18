@@ -22,6 +22,8 @@
 | [evaluate_vindr.py](evaluate_vindr.py) | D단계 3: VinDr 평가 (seed 평균·앙상블, 영상+seed bootstrap, 비열등, pointing game) |
 | [evaluate_rolling.py](evaluate_rolling.py) | 10절(사후): 순위 기반 자동 문턱(최근 W장 확신도 하위 25%)으로 selective prediction 재평가, 내부·VinDr |
 | [compare_stageE.py](compare_stageE.py) | E단계: IWAIT 보고값·3분류 재현·사전 고정·개선 설정을 내부/VinDr, 고정/자동 문턱으로 한 표에 정리 (저장 결과만 사용) |
+| [build_gaze_difficulty.py](build_gaze_difficulty.py) | 11절: finding별 시선 창에서 영상별 난이도 d(머문 시간·다시 말한 횟수·퍼짐)와 판독의 확신도 난이도 u 계산 |
+| [sweep_smooth.py](sweep_smooth.py) | 11절: fs 위에 난이도 가중 label smoothing (gaze / gaze-shuffled / certainty / uniform) 실행·요약 |
 | [download_egd_cxr.sh](download_egd_cxr.sh) | EGD-CXR 시선·라벨 다운로드 (음성 제외) |
 | [make_reflacx_image_list.py](make_reflacx_image_list.py) | REFLACX 영상의 MIMIC-CXR-JPG 경로 목록 생성 (EGD-CXR와 겹치는 영상 제외) |
 | [verify_previous_results.py](verify_previous_results.py) | 이전 연구 보고 수치를 보관된 원본 예측값으로 재계산·대조 |

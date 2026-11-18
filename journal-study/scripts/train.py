@@ -27,6 +27,13 @@ C3 옵션 (2026-11-18 추가, ANALYSIS_PLAN.md 8절 C3)
     --gaze real|shuffled + attn3/hybrid3  전체 시선 지도 하나를 세 attention에 똑같이 준다 (real-global)
     지도가 없는 finding 채널은 gaze loss에서 뺀다 (mask)
 
+11절 옵션 (2026-11-19 추가): 난이도 가중 label smoothing (train 영상에만, val·test label은 그대로)
+    --smooth gaze           시선 난이도 d (gaze_difficulty.csv의 d_{finding})
+    --smooth gaze-shuffled  다른 환자의 시선 난이도 (같은 셔플 매핑)
+    --smooth certainty      판독의 확신도 난이도 u (u_{finding}, REFLACX만, EGD는 0.5)
+    --smooth uniform        모든 영상 0.5 (같은 평균 강도의 일반 smoothing)
+    --smooth-max ε          finding별 ε = ε_max × 난이도, 학습 target = y(1 − ε) + ε/2
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -96,7 +103,31 @@ def build_table(args) -> tuple:
         targets = ["class3_idx"]
     if args.max_images:
         df = df.groupby("split").head(args.max_images)
-    return df.reset_index(drop=True), targets
+    df = df.reset_index(drop=True)
+    if args.task == "findings":
+        add_smoothing(df, args)
+    return df, targets
+
+
+def add_smoothing(df: pd.DataFrame, args) -> None:
+    """finding별 smoothing 강도 eps_{finding} 열을 만든다 (train 영상만, 나머지는 0)."""
+    for f in FINDINGS:
+        df[f"eps_{f}"] = 0.0
+    if args.smooth == "none" or args.smooth_max <= 0:
+        return
+    if args.smooth == "uniform":
+        diff = pd.DataFrame({f: 0.5 for f in FINDINGS}, index=df.index)
+    else:
+        g = pd.read_csv(PROC / "gaze_difficulty.csv").set_index("dicom_id")
+        col = "u" if args.smooth == "certainty" else "d"
+        src = df["dicom_id"]
+        if args.smooth == "gaze-shuffled":
+            smap = pd.read_csv(PROC / f"shuffle_map_seed{args.split_seed}.csv").set_index("dicom_id")["donor_dicom_id"]
+            src = src.map(smap)
+        diff = pd.DataFrame({f: src.map(g[f"{col}_{f}"]).fillna(0.5).values for f in FINDINGS}, index=df.index)
+    train = (df["split"] == "train").values
+    for f in FINDINGS:
+        df.loc[train, f"eps_{f}"] = args.smooth_max * diff.loc[train, f].clip(0, 1)
 
 
 def gaze_source(df: pd.DataFrame, args) -> pd.Series:
@@ -159,6 +190,9 @@ class CXRDataset(Dataset):
             has_gaze = mask
         if self.task == "findings":
             y = torch.tensor([float(r[t]) for t in self.targets])
+            if self.train:  # 난이도 가중 label smoothing (eps가 0이면 원래 label 그대로)
+                eps = torch.tensor([float(r[f"eps_{f}"]) for f in FINDINGS])
+                y = y * (1 - eps) + eps / 2
         else:
             y = torch.tensor(int(r[self.targets[0]]))
         return img, y, hm, torch.as_tensor(has_gaze), i
@@ -317,6 +351,8 @@ def main() -> None:
     ap.add_argument("--backbone", choices=["imagenet", "chexpert"], default="imagenet")
     ap.add_argument("--schedule", choices=["constant", "cosine"], default="constant")
     ap.add_argument("--pool", choices=["avg", "attn", "attn3", "hybrid3"], default="avg")
+    ap.add_argument("--smooth", choices=["none", "gaze", "gaze-shuffled", "certainty", "uniform"], default="none")
+    ap.add_argument("--smooth-max", type=float, default=0.0)
     ap.add_argument("--tag", default="")
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용: 세트마다 앞에서 N장만")
     ap.add_argument("--run-name", default="")
@@ -353,6 +389,10 @@ def main() -> None:
     repeat_global = multi and args.gaze in ("real", "shuffled")
     parts = {s: df[df.split == s] for s in ["train", "val", "test"]}
     print(f"[{name}] device={device}, train {len(parts['train'])} / val {len(parts['val'])} / test {len(parts['test'])}")
+    if args.smooth != "none" and args.smooth_max > 0:
+        e = parts["train"][[f"eps_{f}" for f in FINDINGS]]
+        print(f"  label smoothing {args.smooth} ε_max {args.smooth_max}: train 평균 ε " +
+              ", ".join(f"{f} {e[f'eps_{f}'].mean():.3f}" for f in FINDINGS))
     if args.gaze != "none":
         has_file = parts["train"].gaze_src.map(lambda s: isinstance(s, str) and (hm_dir / f"{s}.npy").exists())
         print(f"  gaze 지도: {hm_dir.name}, 지도 있는 train 영상 {int(has_file.sum())}장"
