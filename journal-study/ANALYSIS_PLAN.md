@@ -113,6 +113,9 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
       - v2 = v1 + perihilar, hilar, haz(hazy/haziness), cephaliz, overload, fluid
       - v3 = v2 + lung ("lungs are clear"처럼 폐 전체를 보고 하는 말. 폐부종은 폐 전체에 퍼지는 소견이라 볼 위치가 폐 전체)
       - 선택 규칙: 폐부종 타원 안 시선 비율이 전체 시선 지도보다 높게 유지되는 세트 중 음성 coverage가 가장 높은 세트
+      - 결과 (train coverage 음성 / 타원 안 비율, 전체 시선 0.382): v1 0.063 / 0.584, v2 0.165 / 0.594, v3 0.625 / 0.579 → 규칙상 v3
+    - 지도 확인 (학습 전, train·val): 병변 타원 안에 들어간 시선 비율이 finding별 지도(3초)에서 전체 시선 지도보다 높음
+      (흉막 0.409 vs 0.171, 심장비대 0.507 vs 0.285, 폐부종 0.584 vs 0.382; 영상의 84~92%에서 더 높음)
   - 모델: finding별 attention 지도(3장) + finding별 hybrid pooling (전체 평균 특징과 자기 attention 특징을 이어 붙여 판단)
   - 조건: none (λ0) / real-global (기존 전체 시선 지도를 세 attention에 동일 적용) / real-fs (finding별 시선) /
     shuffled-fs (C와 같은 셔플 매핑으로 다른 환자의 finding별 시선) / ellipse (참고 비교: REFLACX 판독의가 그린 병변 타원,
