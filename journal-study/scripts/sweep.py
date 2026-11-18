@@ -71,7 +71,7 @@ def configs(args):
     if args.stage == "C3":
         cfg = [("none", args.backbone, args.lr, "hybrid3", 0.0, args.size)]
         cfg += [(g, args.backbone, args.lr, "hybrid3", lam, args.size)
-                for g in ["real", "fs", "fs-shuffled", "ellipse"] for lam in [0.1, 0.3, 1.0]]
+                for g in ["real", "fs", "fs-shuffled", "ellipse"] for lam in args.lams]
         return cfg, args.seeds or [0, 1, 2]
     cfg = []
     for item in args.choice:
@@ -155,6 +155,8 @@ def main():
     ap.add_argument("--size", type=int, default=512, help="단계 B·C의 입력 크기 (A2에서 고른 값)")
     ap.add_argument("--choice", nargs="*", default=[])
     ap.add_argument("--seeds", type=int, nargs="*")
+    ap.add_argument("--lams", type=float, nargs="*", default=[0.1, 0.3, 1.0],
+                    help="C3의 λ 범위. 범위 확장은 run --lams 0.03 3.0, 전체 요약은 report --lams 0.03 0.1 0.3 1.0 3.0")
     ap.add_argument("--window", type=float, default=3.0, help="fs 조건의 창 길이(초). 민감도 분석은 1.5, 5")
     ap.add_argument("--extra", default="", help='train.py에 그대로 넘길 인자. 예: "--max-images 64 --epochs 1"')
     args = ap.parse_args()
