@@ -13,6 +13,8 @@
 | [build_split.py](build_split.py) | 3단계: 환자 단위 70/15/15 분할 (5명 판독 영상은 test 고정, 소견·데이터셋·AP 층화) |
 | [build_heatmaps.py](build_heatmaps.py) | 4-2단계: train·val 시선 지도(512×512, sigma 7, 합 1)와 일대일 셔플 매핑 생성 |
 | [build_fs_heatmaps.py](build_fs_heatmaps.py) | C3단계: finding별 시선 지도(말하기 W초 전~말 끝, W = 1.5·3·5)와 병변 타원 지도(3×128×128) 생성, coverage 출력 |
+| [compare_edema_words.py](compare_edema_words.py) | C3단계 보완: 폐부종 단어 세트 v1·v2·v3의 train coverage와 타원 겹침 비교 (학습 전 결정용) |
+| [check_fs_maps.py](check_fs_maps.py) | C3단계 확인: finding별 시선 지도가 병변 타원 안에 더 많이 떨어지는지(전체 시선 대비), 평균 지도 무게중심 |
 | [check_gaze_alignment.py](check_gaze_alignment.py) | 4-1단계: 시선 좌표가 JPG 픽셀 좌표와 맞는지 확인 (영상 안쪽 비율, 겹침 그림 6장) |
 | [download_egd_cxr.sh](download_egd_cxr.sh) | EGD-CXR 시선·라벨 다운로드 (음성 제외) |
 | [make_reflacx_image_list.py](make_reflacx_image_list.py) | REFLACX 영상의 MIMIC-CXR-JPG 경로 목록 생성 (EGD-CXR와 겹치는 영상 제외) |

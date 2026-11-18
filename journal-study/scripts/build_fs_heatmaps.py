@@ -4,7 +4,10 @@ finding별 시선 지도
     1. 판독 녹취에서 finding 관련 단어를 찾는다 (소문자, 문장부호 제거 후 어근으로 시작하면 일치. 예: effusions, blunted)
          pleural  effusion, pleura, costophrenic, blunt
          cardiac  cardiomegal, cardiac, heart, cardiomediastin
-         edema    edema, oedema, congest, vascul, interstitial, kerley
+         edema    --edema-set 에 따라 (2026-11-18 추가, train coverage만 보고 결정, 학습 결과와 무관)
+                  v1  edema, oedema, congest, vascul, interstitial, kerley
+                  v2  v1 + perihilar, hilar, haz(hazy/haziness), cephaliz, overload, fluid
+                  v3  v2 + lung(lung/lungs: "lungs are clear"처럼 폐 전체를 보고 하는 말)
        부정 표현("no effusion")도 포함한다
     2. 단어를 말하기 시작하기 W초 전부터 말을 마칠 때까지를 창으로 잡는다 (여러 번 말하면 창을 합친다)
     3. 창과 겹치는 고정점만 쓰고, 창 안에 머문 시간을 가중치로 한다
@@ -28,9 +31,10 @@ finding별 시선 지도
     ~/X-ray/data/processed/heatmaps_ellipse_128/{dicom_id}.npy   (타원이 하나라도 있는 영상만)
     ~/X-ray/data/processed/fs_heatmap_index.csv                  영상별 finding별 지도 유무
     ~/X-ray/data/processed/fs_mentions.csv                       판독별 단어 수·창 안 고정점 수
+    ~/X-ray/data/processed/fs_build_config.json                  사용한 단어 세트·창 길이
     ~/X-ray/data/processed/qc/fs_*.png                           확인용 그림
 
-사용법  python build_fs_heatmaps.py [--windows 1.5 3 5] [--max-images N]
+사용법  python build_fs_heatmaps.py [--windows 1.5 3 5] [--edema-set v1|v2|v3] [--max-images N]
 """
 import argparse
 import json
@@ -53,6 +57,12 @@ ROOTS = {
     "cardiac": ["cardiomegal", "cardiac", "heart", "cardiomediastin"],
     "edema": ["edema", "oedema", "congest", "vascul", "interstitial", "kerley"],
 }
+EDEMA_SETS = {
+    "v1": ["edema", "oedema", "congest", "vascul", "interstitial", "kerley"],
+    "v2": ["edema", "oedema", "congest", "vascul", "interstitial", "kerley",
+           "perihilar", "hilar", "haz", "cephaliz", "overload", "fluid"],
+}
+EDEMA_SETS["v3"] = EDEMA_SETS["v2"] + ["lung"]
 ELLIPSE_COLS = {
     "pleural": ["Pleural abnormality", "Pleural effusion", "Pleural thickening"],
     "cardiac": ["Enlarged cardiac silhouette"],
@@ -98,8 +108,9 @@ def load_fixations(row, egd_groups) -> pd.DataFrame:
                          "end": f["timestamp_end_fixation"].values.astype(float)})
 
 
-def mention_windows(words: pd.DataFrame, finding: str, w: float) -> list:
-    hit = words["word"].map(lambda x: any(x.startswith(r) for r in ROOTS[finding]))
+def mention_windows(words: pd.DataFrame, finding: str, w: float, roots=None) -> list:
+    roots = roots or ROOTS[finding]
+    hit = words["word"].map(lambda x: any(x.startswith(r) for r in roots))
     wins = sorted((max(0.0, s - w), e) for s, e in zip(words.loc[hit, "start"], words.loc[hit, "end"]))
     merged = []
     for s, e in wins:  # 겹치는 창은 합친다
@@ -205,7 +216,10 @@ def main() -> None:
     ap.add_argument("--main-window", type=float, default=3.0)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용")
+    ap.add_argument("--edema-set", choices=list(EDEMA_SETS), default="v1")
     args = ap.parse_args()
+    ROOTS["edema"] = EDEMA_SETS[args.edema_set]
+    print(f"폐부종 단어 세트 {args.edema_set}: {ROOTS['edema']}")
 
     reads = pd.read_csv(PROC / "cohort_readings.csv")
     split = pd.read_csv(PROC / f"split_seed{args.seed}.csv")[["dicom_id", "split"]]
@@ -271,6 +285,8 @@ def main() -> None:
 
     index = pd.DataFrame(img_rows).merge(lab, on="dicom_id", how="left")
     index.to_csv(PROC / "fs_heatmap_index.csv", index=False)
+    json.dump({"edema_set": args.edema_set, "roots": ROOTS, "windows": args.windows},
+              open(PROC / "fs_build_config.json", "w"), indent=2)
     men = pd.DataFrame(men_rows)
     men.to_csv(PROC / "fs_mentions.csv", index=False)
     save_qc(index, imgs, args.main_window)

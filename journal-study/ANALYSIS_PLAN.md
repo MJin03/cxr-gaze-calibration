@@ -107,6 +107,12 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
     - 창과 겹치는 고정점만 쓰고 창 안에 머문 시간을 가중치로 함. 512에서 만든 지도를 4×4 합산해 128×128로 저장
     - 부정 표현("no effusion" 등)도 포함 (시선이 가르치는 것은 "어디를 볼지"이고 병 유무는 label이 가르침)
     - 해당 단어가 없는 판독은 그 finding의 gaze loss를 계산하지 않음 (mask). 시선 2개인 영상은 있는 지도끼리 평균
+    - 폐부종 단어 보완 (2026-11-18, 지도 생성 후·학습 전): 위 단어(v1)로는 train 폐부종 음성 영상의 6.3%만 지도가 생김
+      (정상일 때 "no edema"라고 잘 말하지 않음). 다음 세트를 train·val의 coverage와 병변 타원 겹침만으로 비교해 하나를 고른다
+      (학습·test 결과는 보지 않음, 흉막·심장비대 단어는 바꾸지 않음)
+      - v2 = v1 + perihilar, hilar, haz(hazy/haziness), cephaliz, overload, fluid
+      - v3 = v2 + lung ("lungs are clear"처럼 폐 전체를 보고 하는 말. 폐부종은 폐 전체에 퍼지는 소견이라 볼 위치가 폐 전체)
+      - 선택 규칙: 폐부종 타원 안 시선 비율이 전체 시선 지도보다 높게 유지되는 세트 중 음성 coverage가 가장 높은 세트
   - 모델: finding별 attention 지도(3장) + finding별 hybrid pooling (전체 평균 특징과 자기 attention 특징을 이어 붙여 판단)
   - 조건: none (λ0) / real-global (기존 전체 시선 지도를 세 attention에 동일 적용) / real-fs (finding별 시선) /
     shuffled-fs (C와 같은 셔플 매핑으로 다른 환자의 finding별 시선) / ellipse (참고 비교: REFLACX 판독의가 그린 병변 타원,
