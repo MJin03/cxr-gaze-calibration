@@ -132,3 +132,48 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
 
 통계 보완: 차이의 신뢰구간에 seed 변동을 반영하기 위해 seed와 test 환자를 함께 다시 뽑는 bootstrap을 추가한다 (1~7절 결과에도 함께 적용해 보고).
 gaze heatmap sigma는 조정하지 않는다 (모델이 16×16으로 줄여 쓰므로 영향이 작음).
+
+## 9. VinDr-CXR 외부 검증 계획 (2026-11-18, VinDr 예측 전에 고정)
+
+VinDr-CXR test는 지금까지 한 번도 예측하지 않았다 (label 개수만 확인). 아래 계획대로 한 번만 실행하고,
+결과를 본 뒤 설정·전처리·비교를 바꾸지 않는다. 8절의 내부 test 결과(사후)와 구분해 보고한다.
+코드: scripts/vindr_common.py에 조건·비교·마진을 그대로 고정.
+
+1. 대상과 label
+- VinDr-CXR test 3,000장 (영상의학과 전문의 5명 합의 label). 변환 실패 영상은 제외하고 개수를 보고
+- 흉막 = Pleural effusion 또는 Pleural thickening (259장, 학습의 pleural abnormality와 같은 정의)
+- 심장비대 = Cardiomegaly (309장)
+- 민감도 분석: 흉막을 Pleural effusion만으로 (111장)
+- 폐부종: 양성 0장 → 평가하지 않음
+
+2. 영상 전처리 (label·예측을 보지 않고 결정)
+- DICOM VOI LUT 적용, MONOCHROME1 반전, 최솟값~최댓값을 0~255로, 비율 유지 없이 512×512 (BILINEAR, 내부와 같음)
+- plain(그대로)과 eq(histogram equalization) 중 내부 train 영상(1,000장 표본)과 평균 히스토그램 L1 거리가 작은 쪽을 사용
+
+3. 모델 (재학습 없음, 저장된 best.pt 그대로)
+- fs (hybrid3 λ0.3), c1_none (avg), fs_shuffled (hybrid3 λ0.3), real_global (hybrid3 λ1.0), hyb_none (hybrid3 λ0),
+  ellipse (hybrid3 λ0.1): 각 seed 0~9
+- 1~7절 사전 고정 설정 none / real / shuffled: 각 seed 0~4
+- temperature와 referral 기준(확신도 문턱)은 내부 val에서 정한 값을 그대로 사용
+
+4. 비교
+- 주 비교: fs − c1_none (가장 강한 기준선), fs − fs_shuffled (시선 내용 효과)
+- 보조: fs − real_global (finding별 분리 효과), fs − hyb_none, 사전 고정 설정의 real − none, real − shuffled
+- 비열등: fs − ellipse, AUROC 차이의 ci2 하한이 −0.02보다 크면 "수작업 타원 대비 비열등"
+
+5. 지표
+- 주 지표: referral 25%에서 missed-positive rate (흉막, 심장비대). 주요 보조: AUROC
+- seed 평균과 앙상블(seed 10개 또는 5개의 보정 확률 평균) 둘 다 보고
+- 실제 referral 비율을 함께 보고. 보조로 VinDr 자신의 확신도 분포로 정확히 25%를 보내는 경우(label 불필요)의 missed
+- 그 밖: ECE, Brier, AURC, E-AURC, error-detection AUROC, workload@민감도 95·98%, referral 10·30·50%, referral 곡선
+
+6. 신뢰구간 (bootstrap 2000회, 영상 단위: VinDr는 환자 ID가 없음)
+- seed 평균: ci = 영상만 / ci2 = 영상 + 조건별 seed 복원추출 (판정은 ci2)
+- 앙상블: ci = 영상만 / ci2 = 영상 + 앙상블 구성 seed 복원추출 (판정은 ci2)
+- 판정: ci2가 0을 포함하지 않으면 차이 있음. 주 비교 2개 × finding 2개는 각각 보고 (다중 비교 보정 없음, 해석 시 명시)
+
+7. pointing game (hybrid3 조건만, avg 모델은 attention 지도가 없음)
+- 박스가 있는 양성 영상에서 finding별 attention(16×16)이 가장 강한 칸이 해당 finding 박스(흉막 = effusion·thickening 박스)와 겹치면 hit
+- 보조: 박스 안 attention 비율 (칸별 박스 덮임 비율 × attention softmax의 합)
+- seed 평균 ± SD, 앙상블(attention softmax 평균), fs − 다른 조건 차이의 영상+seed bootstrap CI
+
