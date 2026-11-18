@@ -20,6 +20,7 @@
 | [build_vindr_cache.py](build_vindr_cache.py) | D단계 1: VinDr test DICOM → 512 PNG (plain/eq), label·박스 정리, 밝기 분포로 전처리 선택 |
 | [predict_vindr.py](predict_vindr.py) | D단계 2: 학습된 모델로 VinDr 예측 (재학습 없음), hybrid3는 attention 지도 저장 |
 | [evaluate_vindr.py](evaluate_vindr.py) | D단계 3: VinDr 평가 (seed 평균·앙상블, 영상+seed bootstrap, 비열등, pointing game) |
+| [evaluate_rolling.py](evaluate_rolling.py) | 10절(사후): 순위 기반 자동 문턱(최근 W장 확신도 하위 25%)으로 selective prediction 재평가, 내부·VinDr |
 | [download_egd_cxr.sh](download_egd_cxr.sh) | EGD-CXR 시선·라벨 다운로드 (음성 제외) |
 | [make_reflacx_image_list.py](make_reflacx_image_list.py) | REFLACX 영상의 MIMIC-CXR-JPG 경로 목록 생성 (EGD-CXR와 겹치는 영상 제외) |
 | [verify_previous_results.py](verify_previous_results.py) | 이전 연구 보고 수치를 보관된 원본 예측값으로 재계산·대조 |
