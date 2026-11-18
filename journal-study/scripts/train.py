@@ -17,6 +17,16 @@ Baseline과 gaze 모델이 완전히 같은 코드로 돌도록 --gaze 옵션 �
     --pool avg|attn                attn = 1×1 conv 위치 분포로 feature를 가중 평균해 분류 (gaze 조건이면 그 분포를 gaze로 학습)
     --tag 문자열                    run 이름 뒤에 붙는 설정 표시 (sweep.py가 자동으로 붙임)
 
+C3 옵션 (2026-11-18 추가, ANALYSIS_PLAN.md 8절 C3)
+    --pool attn3|hybrid3           finding마다 attention 지도를 따로 둔다 (1×1 conv 3채널)
+                                   attn3   = finding별 attention 특징으로만 판단
+                                   hybrid3 = [전체 평균 특징, finding별 attention 특징]을 이어 붙여 판단
+    --gaze fs                      finding별 시선 지도 (heatmaps_fs_w{W}_128, W = --fs-window)
+    --gaze fs-shuffled             다른 환자의 finding별 시선 지도 (같은 셔플 매핑)
+    --gaze ellipse                 판독의가 그린 병변 타원 (heatmaps_ellipse_128, REFLACX 양성만)
+    --gaze real|shuffled + attn3/hybrid3  전체 시선 지도 하나를 세 attention에 똑같이 준다 (real-global)
+    지도가 없는 finding 채널은 gaze loss에서 뺀다 (mask)
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -94,47 +104,64 @@ def gaze_source(df: pd.DataFrame, args) -> pd.Series:
     if args.gaze == "none":
         return pd.Series(np.nan, index=df.index)
     src = df["dicom_id"].where(df["split"] == "train")
-    if args.gaze == "shuffled":
+    if args.gaze in ("shuffled", "fs-shuffled"):
         smap = pd.read_csv(PROC / f"shuffle_map_seed{args.split_seed}.csv").set_index("dicom_id")["donor_dicom_id"]
         src = src.map(smap)
     return src
 
 
 class CXRDataset(Dataset):
-    def __init__(self, df, targets, task, img_dir, hm_dir, train, img_size):
+    """n_maps = 1 (기존 avg/attn: 512 지도 1장) 또는 3 (attn3/hybrid3: finding별 128 지도 3장)."""
+    MULTI_RES = 128
+
+    def __init__(self, df, targets, task, img_dir, hm_dir, train, img_size, n_maps=1, repeat_global=False):
         self.df, self.targets, self.task = df.reset_index(drop=True), targets, task
         self.img_dir, self.hm_dir, self.train, self.size = img_dir, hm_dir, train, img_size
+        self.n_maps, self.repeat_global = n_maps, repeat_global
+        self.res = img_size if n_maps == 1 else self.MULTI_RES
 
     def __len__(self):
         return len(self.df)
 
+    def load_map(self, src):
+        hm = torch.from_numpy(np.load(self.hm_dir / f"{src}.npy").astype(np.float32))
+        if hm.dim() == 2:
+            hm = hm[None]
+        if self.repeat_global:  # 전체 시선 지도 하나를 세 finding에 똑같이
+            hm = hm.expand(self.n_maps, -1, -1).contiguous()
+        if hm.shape[-1] != self.res:  # 입력 크기(또는 128)에 맞게 평균으로 줄인다
+            hm = F.adaptive_avg_pool2d(hm[None], self.res)[0]
+        return hm
+
     def __getitem__(self, i):
         r = self.df.iloc[i]
         img = TF.to_tensor(Image.open(self.img_dir / f"{r.dicom_id}.png").convert("L"))  # 1×H×W, 0~1
-        has_gaze = isinstance(r.gaze_src, str)
-        hm = (torch.from_numpy(np.load(self.hm_dir / f"{r.gaze_src}.npy").astype(np.float32))[None]
-              if has_gaze else torch.zeros(1, self.size, self.size))
-        if hm.shape[-1] != self.size:  # heatmap은 512로 만들어 두었으므로 입력 크기에 맞게 줄인다
-            hm = F.adaptive_avg_pool2d(hm[None], self.size)[0]
+        has_gaze = isinstance(r.gaze_src, str) and (self.hm_dir / f"{r.gaze_src}.npy").exists()
+        hm = self.load_map(r.gaze_src) if has_gaze else torch.zeros(self.n_maps, self.res, self.res)
         if self.train:
             angle = random.uniform(-5, 5)
-            shift = [int(random.uniform(-0.03, 0.03) * self.size) for _ in range(2)]
+            frac = [random.uniform(-0.03, 0.03) for _ in range(2)]
+            shift = [int(f * self.size) for f in frac]
             scale = random.uniform(0.95, 1.05)
             img = TF.affine(img, angle=angle, translate=shift, scale=scale, shear=[0.0],
                             interpolation=TF.InterpolationMode.BILINEAR)
-            if has_gaze:  # 영상과 똑같이 움직여야 위치가 맞는다
-                hm = TF.affine(hm, angle=angle, translate=shift, scale=scale, shear=[0.0],
+            if has_gaze:  # 영상과 똑같이 움직여야 위치가 맞는다 (지도 해상도에 맞춰 이동량 환산)
+                hshift = shift if self.res == self.size else [int(round(f * self.res)) for f in frac]
+                hm = TF.affine(hm, angle=angle, translate=hshift, scale=scale, shear=[0.0],
                                interpolation=TF.InterpolationMode.BILINEAR)
             img = ((img - 0.5) * random.uniform(0.9, 1.1) + 0.5 + random.uniform(-0.05, 0.05)).clamp(0, 1)
-        if has_gaze:
-            s = hm.sum()
-            hm = hm / s if s > 0 else hm
-            has_gaze = bool(s > 0)
+        s = hm.flatten(1).sum(1)  # 채널별 합
+        mask = s > 0
+        hm = hm / s.clamp_min(1e-12)[:, None, None]
+        if self.n_maps == 1:
+            has_gaze = bool(mask[0])
+        else:
+            has_gaze = mask
         if self.task == "findings":
             y = torch.tensor([float(r[t]) for t in self.targets])
         else:
             y = torch.tensor(int(r[self.targets[0]]))
-        return img, y, hm, torch.tensor(has_gaze), i
+        return img, y, hm, torch.as_tensor(has_gaze), i
 
 
 def seed_worker(_):
@@ -154,8 +181,14 @@ class Net(nn.Module):
         else:
             base = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None)
         self.features = base.features
+        self.multi = pool in ("attn3", "hybrid3")
         self.head = nn.Linear(1024, n_out)
-        self.gaze_head = nn.Conv2d(1024, 1, kernel_size=1)
+        if self.multi:  # finding별 분류기: attn3 = 1024, hybrid3 = 2048 (평균 + attention)
+            d = 2048 if pool == "hybrid3" else 1024
+            self.head_w = nn.Parameter(torch.empty(n_out, d))
+            self.head_b = nn.Parameter(torch.zeros(n_out))
+            nn.init.kaiming_uniform_(self.head_w, a=math.sqrt(5))
+        self.gaze_head = nn.Conv2d(1024, n_out if self.multi else 1, kernel_size=1)
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
 
@@ -166,6 +199,14 @@ class Net(nn.Module):
             x = (x.expand(-1, 3, -1, -1) - self.mean) / self.std
         f = F.relu(self.features(x))
         att = self.gaze_head(f)
+        if self.multi:
+            w = torch.softmax(att.flatten(2).float(), dim=-1).to(f.dtype)  # B×K×HW
+            per = torch.einsum("bkn,bcn->bkc", w, f.flatten(2))            # B×K×1024 (finding별 attention 특징)
+            if self.pool == "hybrid3":
+                g = F.adaptive_avg_pool2d(f, 1).flatten(1)                 # B×1024
+                per = torch.cat([g[:, None].expand(-1, per.shape[1], -1), per], dim=-1)
+            logits = (per * self.head_w.to(per.dtype)).sum(-1) + self.head_b.to(per.dtype)
+            return logits, att
         if self.pool == "attn":
             w = torch.softmax(att.flatten(2), dim=-1)            # B×1×HW
             pooled = (f.flatten(2) * w).sum(-1)                   # B×1024
@@ -180,10 +221,15 @@ def cls_loss(logits, y, task):
 
 
 def gaze_kl(att, hm, has_gaze):
-    """KL(target ∥ model). target = heatmap을 feature map 크기로 줄여 다시 합 1로."""
+    """KL(target ∥ model). target = heatmap을 feature map 크기로 줄여 다시 합 1로.
+    has_gaze: B (지도 1장) 또는 B×K (finding별, 지도 없는 채널은 제외). 지도 하나하나를 평균."""
     if not has_gaze.any():
         return att.sum() * 0.0
-    att, hm = att[has_gaze], hm[has_gaze]
+    if has_gaze.dim() == 1:
+        att, hm = att[has_gaze], hm[has_gaze]
+    else:
+        att = att.flatten(0, 1)[has_gaze.flatten()][:, None]
+        hm = hm.flatten(0, 1)[has_gaze.flatten()][:, None]
     t = F.adaptive_avg_pool2d(hm, att.shape[-2:]).flatten(1)
     t = t / t.sum(1, keepdim=True).clamp_min(1e-12)
     logp = F.log_softmax(att.flatten(1).float(), dim=1)
@@ -253,7 +299,8 @@ def summarize(logits, y, task, temps, names):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", choices=["findings", "class3"], default="findings")
-    ap.add_argument("--gaze", choices=["none", "real", "shuffled"], default="none")
+    ap.add_argument("--gaze", choices=["none", "real", "shuffled", "fs", "fs-shuffled", "ellipse"], default="none")
+    ap.add_argument("--fs-window", type=float, default=3.0, help="finding별 시선 지도의 창 길이(초)")
     ap.add_argument("--gaze-weight", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--split-seed", type=int, default=42)
@@ -269,7 +316,7 @@ def main() -> None:
     ap.add_argument("--no-pretrained", action="store_true")
     ap.add_argument("--backbone", choices=["imagenet", "chexpert"], default="imagenet")
     ap.add_argument("--schedule", choices=["constant", "cosine"], default="constant")
-    ap.add_argument("--pool", choices=["avg", "attn"], default="avg")
+    ap.add_argument("--pool", choices=["avg", "attn", "attn3", "hybrid3"], default="avg")
     ap.add_argument("--tag", default="")
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용: 세트마다 앞에서 N장만")
     ap.add_argument("--run-name", default="")
@@ -278,6 +325,11 @@ def main() -> None:
     args = ap.parse_args()
     if args.task == "class3" and args.gaze != "none":
         raise SystemExit("class3 재현 확인은 --gaze none 으로만 실행합니다.")
+    multi = args.pool in ("attn3", "hybrid3")
+    if args.gaze in ("fs", "fs-shuffled", "ellipse") and not multi:
+        raise SystemExit(f"--gaze {args.gaze}는 finding별 attention이 필요합니다: --pool attn3 또는 hybrid3")
+    if multi and args.task != "findings":
+        raise SystemExit("attn3/hybrid3는 --task findings 에서만 씁니다.")
 
     name = args.run_name or (f"{args.task}_gaze-{args.gaze}_t{args.threshold}_seed{args.seed}"
                              + (f"_{args.tag}" if args.tag else ""))
@@ -295,14 +347,20 @@ def main() -> None:
     df["gaze_src"] = gaze_source(df, args)
     names = FINDINGS if args.task == "findings" else CLASS3
     img_dir = PROC / f"images_{args.img_size}"
-    hm_dir = PROC / "heatmaps_512_s7"
+    hm_dir = (PROC / f"heatmaps_fs_w{args.fs_window:g}_128" if args.gaze in ("fs", "fs-shuffled")
+              else PROC / "heatmaps_ellipse_128" if args.gaze == "ellipse" else PROC / "heatmaps_512_s7")
+    n_maps = len(FINDINGS) if multi else 1
+    repeat_global = multi and args.gaze in ("real", "shuffled")
     parts = {s: df[df.split == s] for s in ["train", "val", "test"]}
     print(f"[{name}] device={device}, train {len(parts['train'])} / val {len(parts['val'])} / test {len(parts['test'])}")
     if args.gaze != "none":
-        print(f"  gaze heatmap 있는 train 영상: {parts['train'].gaze_src.notna().sum()}장")
+        has_file = parts["train"].gaze_src.map(lambda s: isinstance(s, str) and (hm_dir / f"{s}.npy").exists())
+        print(f"  gaze 지도: {hm_dir.name}, 지도 있는 train 영상 {int(has_file.sum())}장"
+              + (" (finding별, 없는 채널은 loss 제외)" if multi and not repeat_global else ""))
 
     g = torch.Generator().manual_seed(args.seed)
-    mk = lambda d, tr: DataLoader(CXRDataset(d, targets, args.task, img_dir, hm_dir, tr, args.img_size),
+    mk = lambda d, tr: DataLoader(CXRDataset(d, targets, args.task, img_dir, hm_dir, tr, args.img_size,
+                                             n_maps, repeat_global),
                                   batch_size=args.batch_size if tr else args.batch_size * 2, shuffle=tr,
                                   num_workers=args.workers, pin_memory=amp, drop_last=tr and len(d) > args.batch_size,
                                   worker_init_fn=seed_worker, generator=g if tr else None,

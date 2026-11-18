@@ -92,6 +92,27 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
   - C1 (주 비교): B의 선택 규칙대로 고른 설정 — none avg / real avg λ0.03 / shuffled avg λ0.03
   - C2 (보조 비교, B 결과를 보고 추가): gaze가 판단 위치를 정하는 같은 구조에서 진짜 시선의 정보 효과 확인 —
     none attn / real attn λ0.3 / shuffled attn λ0.3 (λ는 real의 val 최고값, 세 조건에 동일 적용)
+- C 결과 (seed 0~9, 내부 test, 환자+seed bootstrap CI 기준):
+  - C1: 세 조건 간 유의한 차이 없음
+  - C2: 심장비대 missed@25% real−none −0.068 [−0.123, −0.014], AUROC real−none +0.016~0.018 (세 finding),
+    흉막 AUROC real−shuffled +0.017 [+0.002, +0.035]. 단 C1 none(avg) 대비(eval_C2x)는 유의한 차이 없음
+  - 사전 고정 설정(1~7절)에 환자+seed CI를 적용하면 유의한 차이 없음
+- C3. finding별 시선 (finding-specific gaze), 2026-11-18 추가 — C 결과 확인 후, 실행 전에 아래를 고정한다
+  - 근거: gaze 지도 하나가 세 finding의 시선을 섞고 있고, 한 곳만 보는 attention pooling은 여러 곳에 생기는 흉막에 불리했음
+  - finding별 gaze 지도: 판독 녹취에서 finding 관련 단어를 말하기 시작하기 3초 전부터 말을 마칠 때까지의 고정점만 사용
+    (창 길이 3초 고정·튜닝하지 않음, 1.5초·5초는 민감도 분석으로만 보고). 지도 만드는 법은 4-2단계와 같음 (머문 시간 가중, sigma 7, 합 1)
+    - 단어: 흉막 effusion, pleural, costophrenic, blunting / 심장비대 cardiomegaly, cardiac, heart, cardiomediastinal /
+      폐부종 edema, congestion, vascular, interstitial, kerley
+    - 단어 일치는 소문자·문장부호 제거 후 어근으로 시작하는지로 판단 (예: effusions, blunted, pleura, vasculature 포함)
+    - 창과 겹치는 고정점만 쓰고 창 안에 머문 시간을 가중치로 함. 512에서 만든 지도를 4×4 합산해 128×128로 저장
+    - 부정 표현("no effusion" 등)도 포함 (시선이 가르치는 것은 "어디를 볼지"이고 병 유무는 label이 가르침)
+    - 해당 단어가 없는 판독은 그 finding의 gaze loss를 계산하지 않음 (mask). 시선 2개인 영상은 있는 지도끼리 평균
+  - 모델: finding별 attention 지도(3장) + finding별 hybrid pooling (전체 평균 특징과 자기 attention 특징을 이어 붙여 판단)
+  - 조건: none (λ0) / real-global (기존 전체 시선 지도를 세 attention에 동일 적용) / real-fs (finding별 시선) /
+    shuffled-fs (C와 같은 셔플 매핑으로 다른 환자의 finding별 시선) / ellipse (참고 비교: REFLACX 판독의가 그린 병변 타원,
+    certainty ≥3, 양성 판독에만 있음, EGD는 mask)
+  - 주 비교: real-fs vs none, real-fs vs shuffled-fs. 보조: real-fs vs real-global, real-fs vs ellipse, C1 none(avg) 대비
+  - λ 선택: gaze 조건마다 λ {0.1, 0.3, 1.0} × seed 0~2, 위 선택 기준(val)으로 각자 고름 → seed 0~9로 학습 → 내부 test 평가 (사후)
 - D. VinDr-CXR test 외부 검증 (최종 확인)
 - E. 이전 연구(IWAIT 2027), 사전 고정 설정 결과, 개선 설정 결과 비교
 

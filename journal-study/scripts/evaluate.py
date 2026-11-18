@@ -14,6 +14,10 @@
     python evaluate.py --name eval_C1 --seeds 0 1 2 3 4 5 6 7 8 9 \
         --tags none=bb-imagenet_lr0.0001_sch-cosine_pool-avg_lam0 real=... shuffled=...
 
+C3처럼 다른 gaze 조건을 비교하려면 "역할=gaze이름:태그"로 쓴다 (역할 none=기준, real=비교 대상, shuffled=대조)
+    python evaluate.py --name eval_C3 --seeds 0 ... 9 \
+        --tags none=none:bb-..._pool-hybrid3_lam0 real=fs:bb-..._pool-hybrid3_lam0.3 shuffled=fs-shuffled:bb-..._pool-hybrid3_lam0.3
+
 신뢰구간 두 가지 (comparisons.csv)
     ci_low/ci_high     test 환자만 다시 뽑는 bootstrap (사전 계획)
     ci2_low/ci2_high   test 환자 + 조건별 seed를 함께 다시 뽑는 bootstrap (학습 변동 반영, 8절 추가)
@@ -32,6 +36,7 @@ HOME = Path.home() / "X-ray"
 PROC, RUNS = HOME / "data/processed", HOME / "runs"
 CONDS, SEEDS = ["none", "real", "shuffled"], [0, 1, 2, 3, 4]
 TAGS = {c: "" for c in ["none", "real", "shuffled"]}
+GAZE = {c: c for c in ["none", "real", "shuffled"]}  # 역할 → 실제 gaze 조건 이름 (run 폴더 이름)
 FINDINGS, PRIMARY_F = ["pleural", "cardiac", "edema"], ["pleural", "cardiac"]
 RATES, PRIMARY_RATE = [0.10, 0.25, 0.30, 0.50], 0.25
 CURVE = np.round(np.arange(0, 0.91, 0.05), 2)
@@ -49,7 +54,7 @@ def load_runs(th: int) -> dict:
     runs, test_ids = {}, None
     for c in CONDS:
         for s in SEEDS:
-            d = RUNS / (f"findings_gaze-{c}_t{th}_seed{s}" + (f"_{TAGS[c]}" if TAGS[c] else ""))
+            d = RUNS / (f"findings_gaze-{GAZE[c]}_t{th}_seed{s}" + (f"_{TAGS[c]}" if TAGS[c] else ""))
             v = pd.read_csv(d / "preds_val.csv").sort_values("dicom_id").reset_index(drop=True)
             t = pd.read_csv(d / "preds_test.csv").sort_values("dicom_id").reset_index(drop=True)
             temp = json.load(open(d / "temperature.json"))
@@ -178,21 +183,28 @@ def main():
     SEEDS = list(args.seeds)
     for item in args.tags:
         c, t = item.split("=", 1)
+        if c not in TAGS:
+            raise SystemExit(f"역할은 none, real, shuffled 중 하나입니다: {item}")
+        if ":" in t:
+            GAZE[c], t = t.split(":", 1)
         TAGS[c] = t
     out = HOME / "results" / (args.name or f"eval_t{args.threshold}")
     out.mkdir(parents=True, exist_ok=True)
 
     runs, test_ids = load_runs(args.threshold)
     print(f"[{out.name}] seed {SEEDS}, 태그 {TAGS}")
+    if any(GAZE[c] != c for c in CONDS):
+        print("역할 → gaze 조건:", {c: GAZE[c] for c in CONDS})
     print(f"test {len(test_ids)}장, 환자 {test_ids.subject_id.nunique()}명")
 
     # 1. 실행별 지표
     rows = [{"cond": c, "seed": s, "finding": f, **run_metrics(runs[(c, s)][f])}
             for c in CONDS for s in SEEDS + ["ens"] for f in FINDINGS]
     per_run = pd.DataFrame(rows)
+    per_run["gaze"] = per_run.cond.map(GAZE)
     per_run.to_csv(out / "per_run.csv", index=False)
     seeds_only = per_run[per_run.seed != "ens"]
-    metrics = [m for m in per_run.columns if m not in ["cond", "seed", "finding"]]
+    metrics = [m for m in per_run.columns if m not in ["cond", "seed", "finding", "gaze"]]
     summ = seeds_only.groupby(["finding", "cond"])[metrics].agg(["mean", "std"])
     summ.to_csv(out / "summary.csv")
 
@@ -212,6 +224,7 @@ def main():
                               "ci_low": bd.quantile(0.025), "ci_high": bd.quantile(0.975),
                               "ci2_low": bd2.quantile(0.025), "ci2_high": bd2.quantile(0.975)})
     comp = pd.DataFrame(point)
+    comp["compared"] = comp.comparison.map(lambda x: "-".join(GAZE[k] for k in x.split("-")))
     comp.to_csv(out / "comparisons.csv", index=False)
 
     # 3. referral 곡선
@@ -286,13 +299,13 @@ def main():
         for c in CONDS:
             d = seeds_only[(seeds_only.finding == f) & (seeds_only.cond == c)]
             e = per_run[(per_run.finding == f) & (per_run.cond == c) & (per_run.seed == "ens")].iloc[0]
-            print(f"  {c:9s} missed {d['missed_pos_rate@25'].mean():.3f} ± {d['missed_pos_rate@25'].std():.3f} "
+            print(f"  {c + ('(' + GAZE[c] + ')' if GAZE[c] != c else ''):9s} missed {d['missed_pos_rate@25'].mean():.3f} ± {d['missed_pos_rate@25'].std():.3f} "
                   f"(놓친 양성 {d['fn_count@25'].mean():.1f}건, 실제 referral {d['referral_actual@25'].mean():.3f}) | "
                   f"AUROC {d.auroc.mean():.3f} ± {d.auroc.std():.3f} | 앙상블 missed {e['missed_pos_rate@25']:.3f}, AUROC {e.auroc:.3f}")
         for a, b in COMPARE:
             r = comp[(comp.finding == f) & (comp.comparison == f"{a}-{b}") & (comp.metric == "missed_pos_rate@25")].iloc[0]
             r2 = comp[(comp.finding == f) & (comp.comparison == f"{a}-{b}") & (comp.metric == "auroc")].iloc[0]
-            print(f"  {a}−{b}: missed {r.estimate:+.3f} 환자CI [{r.ci_low:+.3f}, {r.ci_high:+.3f}] 환자+seed CI [{r.ci2_low:+.3f}, {r.ci2_high:+.3f}] | "
+            print(f"  {GAZE[a]}−{GAZE[b]}: missed {r.estimate:+.3f} 환자CI [{r.ci_low:+.3f}, {r.ci_high:+.3f}] 환자+seed CI [{r.ci2_low:+.3f}, {r.ci2_high:+.3f}] | "
                   f"AUROC {r2.estimate:+.3f} 환자CI [{r2.ci_low:+.3f}, {r2.ci_high:+.3f}] 환자+seed CI [{r2.ci2_low:+.3f}, {r2.ci2_high:+.3f}]")
     print("\n=== 메타데이터 기준선 AUROC (촬영 방향 + 사진 모양만)")
     print(pd.DataFrame(meta).round(3).to_string(index=False))

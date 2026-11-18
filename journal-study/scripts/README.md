@@ -6,12 +6,13 @@
 |---|---|
 | [build_cohort.py](build_cohort.py) | 1단계: EGD-CXR + REFLACX 통합 목록(판독 단위·영상 단위 CSV) 생성 |
 | [build_image_cache.py](build_image_cache.py) | 5-0단계: 영상을 512×512 흑백 PNG로 미리 줄여 저장 (heatmap과 같은 resize) |
-| [sweep.py](sweep.py) | 개선 단계 A·B·C 실행/요약 (val로 설정 선택, ANALYSIS_PLAN 8절) |
-| [train.py](train.py) | 5·6단계 공용 학습: --task, --gaze, --backbone imagenet/chexpert, --schedule, --pool avg/attn, 결과는 ~/X-ray/runs/ |
+| [sweep.py](sweep.py) | 개선 단계 A·B·C·C3 실행/요약 (val로 설정 선택, ANALYSIS_PLAN 8절) |
+| [train.py](train.py) | 5·6단계 공용 학습: --task, --gaze none/real/shuffled/fs/fs-shuffled/ellipse, --backbone imagenet/chexpert, --schedule, --pool avg/attn/attn3/hybrid3, 결과는 ~/X-ray/runs/ |
 | [evaluate.py](evaluate.py) | 7단계: test 평가 (../ANALYSIS_PLAN.md 기준, referral 25% 주 지표, 환자 단위 bootstrap). 결과는 ~/X-ray/results/ |
 | [build_labels.py](build_labels.py) | 2단계: 판독 라벨을 영상 단위 양성/음성으로 변환 (확신도 기준 3·4, 다판독 과반수) |
 | [build_split.py](build_split.py) | 3단계: 환자 단위 70/15/15 분할 (5명 판독 영상은 test 고정, 소견·데이터셋·AP 층화) |
 | [build_heatmaps.py](build_heatmaps.py) | 4-2단계: train·val 시선 지도(512×512, sigma 7, 합 1)와 일대일 셔플 매핑 생성 |
+| [build_fs_heatmaps.py](build_fs_heatmaps.py) | C3단계: finding별 시선 지도(말하기 W초 전~말 끝, W = 1.5·3·5)와 병변 타원 지도(3×128×128) 생성, coverage 출력 |
 | [check_gaze_alignment.py](check_gaze_alignment.py) | 4-1단계: 시선 좌표가 JPG 픽셀 좌표와 맞는지 확인 (영상 안쪽 비율, 겹침 그림 6장) |
 | [download_egd_cxr.sh](download_egd_cxr.sh) | EGD-CXR 시선·라벨 다운로드 (음성 제외) |
 | [make_reflacx_image_list.py](make_reflacx_image_list.py) | REFLACX 영상의 MIMIC-CXR-JPG 경로 목록 생성 (EGD-CXR와 겹치는 영상 제외) |
