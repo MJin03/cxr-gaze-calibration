@@ -122,6 +122,11 @@ radiologist gaze를 auxiliary loss로 학습한 모델이, 같은 referral 비�
     certainty ≥3, 양성 판독에만 있음, EGD는 mask)
   - 주 비교: real-fs vs none, real-fs vs shuffled-fs. 보조: real-fs vs real-global, real-fs vs ellipse, C1 none(avg) 대비
   - λ 선택: gaze 조건마다 λ {0.1, 0.3, 1.0} × seed 0~2, 위 선택 기준(val)으로 각자 고름 → seed 0~9로 학습 → 내부 test 평가 (사후)
+  - C3 λ 결과 (val score, seed 0~2): real-global λ1.0 0.8905, fs λ0.3 0.8919, fs-shuffled λ0.3 0.8792, ellipse λ0.1 0.8965,
+    none(hybrid3) 0.8635. real-global·ellipse가 범위 끝에서 골라져 네 gaze 조건 모두 λ 0.03, 3.0을 추가 확인 (2026-11-18)
+    → 선택 변화 없음, 모든 선택이 범위 안쪽. 본 실행: none λ0 / real λ1.0 / fs λ0.3 / fs-shuffled λ0.3 / ellipse λ0.1, seed 0~9
+  - 평가: eval_C3 (none / fs / fs-shuffled), eval_C3_vsC1 (C1 none avg / fs / fs-shuffled),
+    eval_C3_ref (real-global / fs / ellipse: fs−real-global, fs−ellipse)
 - D. VinDr-CXR test 외부 검증 (최종 확인)
 - E. 이전 연구(IWAIT 2027), 사전 고정 설정 결과, 개선 설정 결과 비교
 
