@@ -68,7 +68,14 @@ def main():
             cache[size] = torch.from_numpy(np.stack(arr))
         x_all = cache[size]
         model = Net(len(FINDINGS_MODEL), cfg.get("backbone", "imagenet"), False, cfg.get("pool", "avg")).to(device)
-        model.load_state_dict(torch.load(d / "best.pt", map_location=device)["model"])
+        state = torch.load(d / "best.pt", map_location=device)["model"]
+        # 1~7절 사전 고정 run은 ImageNet 정규화를 모델 밖(데이터셋)에서 했던 이전 코드로 학습되어 mean/std 버퍼가 없다.
+        # 지금 모델은 같은 정규화를 안에서 하므로(같은 값), 이 두 버퍼만 없는 경우에 한해 기본값으로 불러온다.
+        res = model.load_state_dict(state, strict=False)
+        if res.unexpected_keys or set(res.missing_keys) - {"mean", "std"}:
+            raise SystemExit(f"{d.name}: 가중치 키가 맞지 않습니다 {res.missing_keys} {res.unexpected_keys}")
+        if res.missing_keys:
+            print(f"  (이전 코드로 학습된 run: 정규화 버퍼 mean/std는 기본값 사용) {d.name}")
         model.eval()
         logits, atts = [], []
         with torch.no_grad():
