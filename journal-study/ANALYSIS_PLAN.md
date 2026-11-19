@@ -230,6 +230,13 @@ VinDr-CXR test는 지금까지 한 번도 예측하지 않았다 (label 개수�
   - VinDr-CXR train에서 무작위 3,000장 (image_labels_train.csv의 고유 image_id를 pandas sample(n=3000, random_state=0)으로 선택,
     label은 판독의 3명 과반수): 같은 병원(VinDr test와 같은 기관)이지만 한 번도 보지 않은 영상, 큰 표본
   - 두 데이터 모두에서 같은 방향이면 "효과 있음", 한쪽만이면 그대로 보고
+- 데이터 재변경 (2026-11-20, CheXpert 예측 전): 이전 AIMI 사이트(stanfordaimi.azurewebsites.net)의 CheXlocalize 데이터에
+  CheXpert test 영상(668장, 환자 500명)과 전문의 label(test_labels.csv: 5명 과반수, val_labels.csv: 3명 합의)이 함께 있음을 확인.
+  Redivis CheXpert Plus의 label은 판독문에서 자동 추출한 것이라 쓰지 않는다. 주 판정 데이터를 원래 계획에 가깝게 다시 정한다
+  - 주: CheXpert test 668장 (전문의 5명 과반수) + VinDr train 무작위 3,000장 (위와 같음)
+  - 보조: CheXpert validation 234장 (전문의 3명 합의, val_labels.csv)
+  - CheXpert는 정면(frontal) 영상만 사용. label 대응: 흉막 = Pleural Effusion (CheXpert 전문의 label에 Pleural Other가 있으면 포함),
+    심장비대 = Cardiomegaly, 폐부종 = Edema, 민감도 분석 = Pleural Effusion만. 세부는 파일 확인 후 예측 전에 추가 기록
 - (원래 계획) 주 판정 데이터: CheXpert test (전문의 합의 label, 한 번도 보지 않음). label 대응과 세부 사항은 데이터 확인 후,
   예측 전에 이 절에 추가로 고정한다. 보조: VinDr test (새 조건은 처음 평가하지만, 이 방향을 VinDr 보정 결과를 보고 정했으므로 보조),
   내부 test (사후)
@@ -240,4 +247,33 @@ VinDr-CXR test는 지금까지 한 번도 예측하지 않았다 (label 개수�
 - 신뢰구간: 영상(내부는 환자) + seed bootstrap 2000회 (ci2)
 - 해석: A가 D와 B보다 calibration slope가 1에 유의하게 가깝고 NLL이 낮으며 AUROC가 떨어지지 않으면
   "시선 난이도가 보정을 개선한다"고 판정. 결과와 관계없이 8~10절의 "fs는 보정을 개선하지 않음"은 그대로 보고
+
+## 11-2. 추가 보정 방법 (2026-11-20, 주 판정 데이터를 보기 전에 고정)
+
+배경: 11절 smoothing은 val에서 가장 좋았지만, 보조 데이터(내부 test, VinDr test)에서 seed 수준으로는
+일반 smoothing과 보정 차이가 없었다. 또 다른 병원(VinDr)에서 모든 모델이 확신 부족(slope > 1)이었고, 정도가 영상마다 달랐다.
+smoothing은 학습 label만 바꾸므로 test에서 영상별로 확신을 조절하지 못한다.
+→ 아래 A를 추가하고, B·C를 보조 분석으로 고정한다. 이 셋까지 val로만 고른 뒤 주 판정 데이터(CheXpert test, VinDr train)에서
+11절 smoothing과 함께 한 번에 평가한다. 이후 주 판정 데이터를 본 뒤에 추가하는 분석은 모두 사후로 표시한다.
+
+A. 난이도 예측 헤드 + 영상별 logit 축소 (train.py --diff-target, --diff-weight; sweep_diff.py)
+- fs(hybrid3, λ0.3) 위에 finding별 난이도 예측 d̂ = sigmoid(w·특징 + b)를 두고,
+  출력 logit = 원래 logit / (1 + softplus(β)·d̂). β는 학습으로 정해지며 test에서 따로 맞추는 값이 없다
+- 정답: gaze(시선 난이도 d, 그 finding을 말한 train 영상만) / gaze-shuffled(다른 환자의 d) / certainty(u, REFLACX만) /
+  free(같은 구조, 난이도 지도 학습 없음). 난이도 loss = BCE(d̂, 정답) × μ
+- μ {0.1, 0.3, 1.0} × seed 0~2, 조건마다 val NLL 최저(같으면 val AUROC) → seed 0~9. 범위 끝에서 선택되면 같은 범위로 한 칸 확장
+- 주 비교: A-gaze − A-free (난이도 지도 학습의 효과), A-gaze − A-gaze-shuffled (시선 내용의 효과)
+  보조: A-gaze − A-certainty, A-gaze − smoothing gaze(11절), A-gaze − fs, A-gaze − C1 none
+- 지표·판정은 11절과 같음 (temperature 없는 calibration slope와 NLL, ci2)
+
+B. attention 퍼짐을 불확실성으로 (보조, 학습 없음)
+- hybrid3 모델의 finding별 attention softmax의 정규화 엔트로피(0~1)를 불확실성 점수로 쓴다
+- 비교 점수: 확신도만(1 − max(p, 1 − p)) / 엔트로피만 / 둘의 순위 평균 (가중치 조정 없음)
+- 지표: 오류 탐지 AUROC, AURC, 자동 문턱(10절, W500) 25% referral에서의 missed
+- 대상: A 조건들, smoothing gaze, fs (외부 데이터 예측 시 attention 저장: predict_external.py)
+
+C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
+- 새 병원의 label 없는 test 영상 전체로 양성 비율을 EM(Saerens 2002)으로 추정해 확률을 조정
+  (내부 train 양성 비율을 사전확률로 시작). 조정 전후의 calibration slope, intercept, NLL을 보고
+- 모든 조건에 같은 방식으로 적용하며, "gaze가 보정을 개선한다"는 주장의 근거로 쓰지 않는다
 

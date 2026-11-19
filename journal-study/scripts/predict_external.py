@@ -2,6 +2,7 @@
 
 조건과 seed는 cal_common.CONDITIONS에 고정. 영상은 각 데이터 폴더의 preprocess_choice.json이 고른 512 PNG.
 출력  각 run 폴더에 preds_{dataset}.csv (image_id, logit_pleural, logit_cardiac, logit_edema)
+      hybrid3 모델은 att_{dataset}.npy (finding별 attention logit, N×3×16×16, float16) — 11-2절 B 분석용
 
 사용법  python predict_external.py --dataset vindr_test|vindr_train|chexpert_valid [--overwrite]
 """
@@ -52,18 +53,24 @@ def main():
             cache[size] = torch.from_numpy(np.stack([np.asarray(
                 Image.open(img_dir / f"{i}.png").convert("L").resize((size, size), Image.BILINEAR)
                 if size != 512 else Image.open(img_dir / f"{i}.png").convert("L")) for i in ids]))
-        model = Net(len(FINDINGS_MODEL), cfg.get("backbone", "imagenet"), False, cfg.get("pool", "avg")).to(device)
+        model = Net(len(FINDINGS_MODEL), cfg.get("backbone", "imagenet"), False, cfg.get("pool", "avg"),
+                    diff=cfg.get("diff_target", "none") != "none").to(device)
         res = model.load_state_dict(torch.load(d / "best.pt", map_location=device)["model"], strict=False)
         if res.unexpected_keys or set(res.missing_keys) - {"mean", "std"}:
             raise SystemExit(f"{d.name}: 가중치 키가 맞지 않습니다 {res.missing_keys} {res.unexpected_keys}")
         model.eval()
-        lg = []
+        lg, atts = [], []
         with torch.no_grad():
             for b in range(0, len(ids), args.batch_size):
                 x = (cache[size][b:b + args.batch_size].float() / 255.0)[:, None].to(device)
                 with torch.autocast(device.type, enabled=amp):
-                    lg.append(model(x)[0].float().cpu())
+                    o, a = model(x)
+                lg.append(o.float().cpu())
+                if model.multi:
+                    atts.append(a.float().cpu())
         lg = torch.cat(lg).numpy()
+        if atts:
+            np.save(d / f"att_{args.dataset}.npy", torch.cat(atts).numpy().astype(np.float16))
         pd.DataFrame({"image_id": ids, **{f"logit_{f}": lg[:, j] for j, f in enumerate(FINDINGS_MODEL)}}).to_csv(out, index=False)
         print(f"[{k}/{len(jobs)}] {c} seed {s} 완료 ({time.time() - t0:.0f}s)", flush=True)
     print("예측 완료")

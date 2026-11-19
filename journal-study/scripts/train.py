@@ -34,6 +34,15 @@ C3 옵션 (2026-11-18 추가, ANALYSIS_PLAN.md 8절 C3)
     --smooth uniform        모든 영상 0.5 (같은 평균 강도의 일반 smoothing)
     --smooth-max ε          finding별 ε = ε_max × 난이도, 학습 target = y(1 − ε) + ε/2
 
+11-2절 옵션 (2026-11-20 추가): 난이도 예측 헤드 + 영상별 logit 축소 (hybrid3만)
+    finding별 특징으로 난이도 d̂ ∈ (0, 1)을 예측하고, 출력 logit = 원래 logit / (1 + softplus(β) × d̂)
+    → 어려워 보이는 영상일수록 확신을 낮춘다. β는 학습으로 정해지고, test에서 따로 맞추는 값이 없다
+    --diff-target gaze           d̂를 시선 난이도 d에 맞추도록 학습 (그 finding을 말한 train 영상만)
+    --diff-target gaze-shuffled  다른 환자의 d에 맞추도록 (대조)
+    --diff-target certainty      판독의 확신도 난이도 u에 맞추도록 (REFLACX만)
+    --diff-target free           같은 구조, 난이도 지도 학습 없음 (구조 효과만)
+    --diff-weight μ              난이도 예측 loss(BCE) 가중치
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -106,7 +115,30 @@ def build_table(args) -> tuple:
     df = df.reset_index(drop=True)
     if args.task == "findings":
         add_smoothing(df, args)
+        add_difficulty_target(df, args)
     return df, targets
+
+
+def add_difficulty_target(df: pd.DataFrame, args) -> None:
+    """난이도 예측 헤드의 정답 dt_{finding}과 사용 여부 dm_{finding} (train 영상만)."""
+    for f in FINDINGS:
+        df[f"dt_{f}"], df[f"dm_{f}"] = 0.5, 0.0
+    if args.diff_target in ("none", "free"):
+        return
+    g = pd.read_csv(PROC / "gaze_difficulty.csv").set_index("dicom_id")
+    src = df["dicom_id"]
+    if args.diff_target == "gaze-shuffled":
+        smap = pd.read_csv(PROC / f"shuffle_map_seed{args.split_seed}.csv").set_index("dicom_id")["donor_dicom_id"]
+        src = src.map(smap)
+    train = (df["split"] == "train").values
+    for f in FINDINGS:
+        if args.diff_target == "certainty":
+            val, ok = src.map(g[f"u_{f}"]), src.map(g[f"cert_{f}"]).notna()
+        else:
+            val, ok = src.map(g[f"d_{f}"]), src.map(g[f"dwell_{f}"]).notna()
+        use = train & ok.values & val.notna().values
+        df.loc[use, f"dt_{f}"] = val[use].clip(0, 1).values
+        df.loc[use, f"dm_{f}"] = 1.0
 
 
 def add_smoothing(df: pd.DataFrame, args) -> None:
@@ -206,7 +238,7 @@ def seed_worker(_):
 
 # ---------------------------------------------------------------- 모델
 class Net(nn.Module):
-    def __init__(self, n_out: int, backbone: str, pretrained: bool, pool: str):
+    def __init__(self, n_out: int, backbone: str, pretrained: bool, pool: str, diff: bool = False):
         super().__init__()
         self.backbone, self.pool = backbone, pool
         if backbone == "chexpert":
@@ -222,6 +254,12 @@ class Net(nn.Module):
             self.head_w = nn.Parameter(torch.empty(n_out, d))
             self.head_b = nn.Parameter(torch.zeros(n_out))
             nn.init.kaiming_uniform_(self.head_w, a=math.sqrt(5))
+        self.diff = diff and pool == "hybrid3"
+        if self.diff:  # 난이도 예측 헤드와 logit 축소 강도 β (softplus(−1) ≈ 0.31에서 시작)
+            self.diff_w = nn.Parameter(torch.zeros(n_out, 2048))
+            self.diff_b = nn.Parameter(torch.zeros(n_out))
+            self.beta = nn.Parameter(torch.full((n_out,), -1.0))
+        self.last_dlogit = None
         self.gaze_head = nn.Conv2d(1024, n_out if self.multi else 1, kernel_size=1)
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
@@ -240,6 +278,11 @@ class Net(nn.Module):
                 g = F.adaptive_avg_pool2d(f, 1).flatten(1)                 # B×1024
                 per = torch.cat([g[:, None].expand(-1, per.shape[1], -1), per], dim=-1)
             logits = (per * self.head_w.to(per.dtype)).sum(-1) + self.head_b.to(per.dtype)
+            if self.diff:
+                dlogit = (per.float() * self.diff_w).sum(-1) + self.diff_b       # B×K
+                scale = 1 + F.softplus(self.beta) * torch.sigmoid(dlogit)
+                logits = logits.float() / scale
+                self.last_dlogit = dlogit
             return logits, att
         if self.pool == "attn":
             w = torch.softmax(att.flatten(2), dim=-1)            # B×1×HW
@@ -353,6 +396,8 @@ def main() -> None:
     ap.add_argument("--pool", choices=["avg", "attn", "attn3", "hybrid3"], default="avg")
     ap.add_argument("--smooth", choices=["none", "gaze", "gaze-shuffled", "certainty", "uniform"], default="none")
     ap.add_argument("--smooth-max", type=float, default=0.0)
+    ap.add_argument("--diff-target", choices=["none", "gaze", "gaze-shuffled", "certainty", "free"], default="none")
+    ap.add_argument("--diff-weight", type=float, default=0.0)
     ap.add_argument("--tag", default="")
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용: 세트마다 앞에서 N장만")
     ap.add_argument("--run-name", default="")
@@ -407,7 +452,17 @@ def main() -> None:
                                   persistent_workers=args.workers > 0)
     tr_loader, va_loader, te_loader = mk(parts["train"], True), mk(parts["val"], False), mk(parts["test"], False)
 
-    model = Net(len(names), args.backbone, not args.no_pretrained, args.pool).to(device)
+    use_diff = args.diff_target != "none"
+    if use_diff and args.pool != "hybrid3":
+        raise SystemExit("--diff-target는 --pool hybrid3에서만 씁니다.")
+    model = Net(len(names), args.backbone, not args.no_pretrained, args.pool, diff=use_diff).to(device)
+    if args.task == "findings":  # 난이도 정답 (train 영상 순서와 같은 인덱스)
+        idx_train = np.arange(len(parts["train"]))
+        dt_all = parts["train"][[f"dt_{f}" for f in FINDINGS]].values.astype(np.float32)
+        dm_all = parts["train"][[f"dm_{f}" for f in FINDINGS]].values.astype(np.float32)
+        if args.diff_target not in ("none", "free"):
+            print(f"  난이도 예측 헤드 {args.diff_target} μ {args.diff_weight}: 정답 있는 train 영상 비율 " +
+                  ", ".join(f"{f} {dm_all[:, k].mean():.3f}" for k, f in enumerate(FINDINGS)))
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     steps_per_epoch = max(len(tr_loader), 1)
     total, warm = args.epochs * steps_per_epoch, steps_per_epoch
@@ -434,26 +489,35 @@ def main() -> None:
     for ep in range(1, args.epochs + 1):
         t0 = time.time()
         model.train()
-        sums = np.zeros(3)
+        sums = np.zeros(4)
         n = 0
-        for img, y, hm, hg, _ in tr_loader:
+        for img, y, hm, hg, i_batch in tr_loader:
             img, y, hm, hg = img.to(device, non_blocking=True), y.to(device), hm.to(device), hg.to(device)
             with torch.autocast(device.type, enabled=amp):
                 logits, att = model(img)
                 lc = cls_loss(logits.float(), y, args.task)
             lg = gaze_kl(att, hm, hg) if args.gaze != "none" else torch.zeros((), device=device)
             loss = lc + args.gaze_weight * lg
+            ld = torch.zeros((), device=device)
+            if args.diff_target not in ("none", "free") and args.diff_weight > 0:
+                bi = idx_train[i_batch.numpy()]
+                dt = torch.tensor(dt_all[bi], device=device)
+                dm = torch.tensor(dm_all[bi], device=device) > 0
+                if dm.any():
+                    ld = F.binary_cross_entropy_with_logits(model.last_dlogit[dm].float(), dt[dm])
+                    loss = loss + args.diff_weight * ld
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
             sched.step()
-            sums += [loss.item(), lc.item(), lg.item()]
+            sums += [loss.item(), lc.item(), lg.item(), ld.item()]
             n += 1
         v_logits, _ = predict(model, va_loader, device, amp)
         v_loss = float(cls_loss(v_logits, y_val, args.task))
         v_met = summarize(v_logits, y_val, args.task, [1.0] * len(names), names)
         row = {"epoch": ep, "train_loss": sums[0] / n, "train_cls": sums[1] / n, "train_gaze_kl": sums[2] / n,
+               "train_diff": sums[3] / n,
                "val_cls_loss": v_loss, **{k: v for k, v in v_met.items() if "auroc" in k or k == "accuracy"},
                "sec": round(time.time() - t0, 1)}
         hist.append(row)
