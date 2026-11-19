@@ -224,7 +224,13 @@ VinDr-CXR test는 지금까지 한 번도 예측하지 않았다 (label 개수�
   본 실행: gaze 0.05 / gaze-shuffled 0.1 / certainty 0.02 / uniform 0.05, seed 0~9
 
 3. 평가
-- 주 판정 데이터: CheXpert test (전문의 합의 label, 한 번도 보지 않음). label 대응과 세부 사항은 데이터 확인 후,
+- 데이터 변경 (2026-11-20, 예측 전): Stanford AIMI(Redivis)에서 CheXpert test 668장은 현재 제공되지 않음을 확인
+  (CheXpert Plus에는 train과 validation 234장만 있음). 주 판정 데이터를 다음 둘로 바꾼다
+  - CheXpert validation 234장 (환자 200명, 전문의 3명 합의 label): 다른 나라·다른 병원
+  - VinDr-CXR train에서 무작위 3,000장 (image_labels_train.csv의 고유 image_id를 pandas sample(n=3000, random_state=0)으로 선택,
+    label은 판독의 3명 과반수): 같은 병원(VinDr test와 같은 기관)이지만 한 번도 보지 않은 영상, 큰 표본
+  - 두 데이터 모두에서 같은 방향이면 "효과 있음", 한쪽만이면 그대로 보고
+- (원래 계획) 주 판정 데이터: CheXpert test (전문의 합의 label, 한 번도 보지 않음). label 대응과 세부 사항은 데이터 확인 후,
   예측 전에 이 절에 추가로 고정한다. 보조: VinDr test (새 조건은 처음 평가하지만, 이 방향을 VinDr 보정 결과를 보고 정했으므로 보조),
   내부 test (사후)
 - 주 지표: temperature scaling 없이 잰 calibration slope (예측 logit에 대한 로지스틱 재보정 기울기, 1이 이상적)와 NLL

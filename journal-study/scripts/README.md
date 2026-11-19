@@ -24,6 +24,10 @@
 | [compare_stageE.py](compare_stageE.py) | E단계: IWAIT 보고값·3분류 재현·사전 고정·개선 설정을 내부/VinDr, 고정/자동 문턱으로 한 표에 정리 (저장 결과만 사용) |
 | [build_gaze_difficulty.py](build_gaze_difficulty.py) | 11절: finding별 시선 창에서 영상별 난이도 d(머문 시간·다시 말한 횟수·퍼짐)와 판독의 확신도 난이도 u 계산 |
 | [sweep_smooth.py](sweep_smooth.py) | 11절: fs 위에 난이도 가중 label smoothing (gaze / gaze-shuffled / certainty / uniform) 실행·요약 |
+| [cal_common.py](cal_common.py) | 11절 공용 설정: smoothing 조건·비교·외부 데이터 목록 고정 |
+| [predict_external.py](predict_external.py) | 11절: 외부 데이터(vindr_test / vindr_train / chexpert_valid) 예측 (재학습 없음) |
+| [build_vindr_train_cache.py](build_vindr_train_cache.py) | 11절: VinDr train 무작위 3,000장 → 512 PNG, 판독의 3명 과반수 label |
+| [evaluate_calibration.py](evaluate_calibration.py) | 11절: calibration slope·NLL·intercept·ECE·Brier·AUROC, 조건 비교 (환자/영상+seed bootstrap) |
 | [download_egd_cxr.sh](download_egd_cxr.sh) | EGD-CXR 시선·라벨 다운로드 (음성 제외) |
 | [make_reflacx_image_list.py](make_reflacx_image_list.py) | REFLACX 영상의 MIMIC-CXR-JPG 경로 목록 생성 (EGD-CXR와 겹치는 영상 제외) |
 | [verify_previous_results.py](verify_previous_results.py) | 이전 연구 보고 수치를 보관된 원본 예측값으로 재계산·대조 |
