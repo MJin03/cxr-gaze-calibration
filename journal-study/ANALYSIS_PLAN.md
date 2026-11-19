@@ -218,6 +218,10 @@ VinDr-CXR test는 지금까지 한 번도 예측하지 않았다 (label 개수�
 - 기준: smoothing 없는 fs (8절), C1 none (avg)
 - ε_max {0.05, 0.1, 0.2} × seed 0~2. 조건마다 val NLL(temperature 전 val 분류 loss) seed 평균이 가장 낮은 ε_max 선택,
   같으면 val AUROC(흉막·심장비대 평균) 높은 쪽 → seed 0~9로 학습 (scripts/sweep_smooth.py)
+- ε 결과 (val, seed 0~2, val NLL): gaze 0.05 0.3264 (SD 0.0036, 전체 최저), gaze-shuffled 0.1 0.3311, certainty 0.05 0.3337,
+  uniform 0.05 0.3372, smoothing 없음 0.3309. gaze·certainty·uniform이 범위 아래 끝에서 선택되어 네 조건 모두 ε 0.02 추가 (2026-11-20)
+  → gaze 0.05, gaze-shuffled 0.1, uniform 0.05 (모두 범위 안쪽), certainty 0.02 (0.3317, smoothing 없음과 거의 같아 더 줄이면 "없음"에 수렴).
+  본 실행: gaze 0.05 / gaze-shuffled 0.1 / certainty 0.02 / uniform 0.05, seed 0~9
 
 3. 평가
 - 주 판정 데이터: CheXpert test (전문의 합의 label, 한 번도 보지 않음). label 대응과 세부 사항은 데이터 확인 후,
