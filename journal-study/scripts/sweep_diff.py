@@ -56,6 +56,9 @@ def do_run(args):
         cmd = [sys.executable, str(TRAIN), "--task", "findings", "--gaze", "fs", "--seed", str(s),
                "--backbone", "imagenet", "--lr", "0.0001", "--schedule", "cosine", "--pool", "hybrid3",
                "--gaze-weight", "0.3", "--diff-target", t, "--diff-weight", str(mu), "--tag", tag(t, mu)] + args.extra.split()
+        if (run_dir(t, mu, s) / "best.pt").exists():  # 중간에 끊긴 run (best.pt만 있고 결과 없음) → 처음부터 다시
+            print("  끊긴 run 발견 → 처음부터 다시 학습 (--overwrite)", flush=True)
+            cmd.append("--overwrite")
         r = subprocess.run(cmd)
         if r.returncode != 0:
             print(f"  [오류] 실패 (returncode {r.returncode}). 다음으로 넘어갑니다.")

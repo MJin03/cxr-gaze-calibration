@@ -29,6 +29,7 @@
 | [build_vindr_train_cache.py](build_vindr_train_cache.py) | 11절: VinDr train 무작위 3,000장 → 512 PNG, 판독의 3명 과반수 label |
 | [evaluate_calibration.py](evaluate_calibration.py) | 11절: calibration slope·NLL·intercept·ECE·Brier·AUROC, 조건 비교 (환자/영상+seed bootstrap) |
 | [download_chexpert_valid.py](download_chexpert_valid.py) | 11절: Redivis(AIMI) CheXpert Plus에서 validation PNG 234장과 label 폴더만 다운로드 (OAuth 로그인) |
+| [build_chexpert_cache.py](build_chexpert_cache.py) | 11절: CheXlocalize 묶음의 CheXpert test·validation 정면 영상을 512 PNG(plain·eq)로 변환, 전문의 label 정리(환자 번호 포함), 전처리 선택 |
 | [sweep_diff.py](sweep_diff.py) | 11-2절: fs + 난이도 예측 헤드·영상별 logit 축소 (gaze / gaze-shuffled / certainty / free) 실행·요약 |
 | [download_egd_cxr.sh](download_egd_cxr.sh) | EGD-CXR 시선·라벨 다운로드 (음성 제외) |
 | [make_reflacx_image_list.py](make_reflacx_image_list.py) | REFLACX 영상의 MIMIC-CXR-JPG 경로 목록 생성 (EGD-CXR와 겹치는 영상 제외) |

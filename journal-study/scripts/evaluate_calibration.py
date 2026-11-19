@@ -120,7 +120,8 @@ def load(dataset, allow_missing):
     else:
         ds = DATASETS[dataset]
         fmap, labels = ds["findings"], pd.read_csv(ds["labels"])
-        groups = np.arange(len(labels))
+        # 환자 번호(group 열)가 있으면 환자 단위 bootstrap, 없으면 영상 단위 (VinDr: 영상당 환자 1명으로 간주)
+        groups = labels["group"].values if "group" in labels.columns else np.arange(len(labels))
     data, seeds = {}, {}
     for c in CONDITIONS:
         ok = []

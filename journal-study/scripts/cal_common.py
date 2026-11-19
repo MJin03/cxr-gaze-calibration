@@ -42,6 +42,10 @@ DATASETS = {
                        findings={"pleural": "pleural", "cardiac": "cardiac", "pleural_effusion": "pleural"}),
     "vindr_train": dict(img=PROC / "vindr_train3000", labels=PROC / "vindr_train3000/labels.csv",
                         findings={"pleural": "pleural", "cardiac": "cardiac", "pleural_effusion": "pleural"}),
+    # CheXpert (CheXlocalize 묶음, 전문의 label, 정면 영상만). label 열 → 모델 출력
+    "chexpert_test": dict(img=PROC / "chexpert_test", labels=PROC / "chexpert_test/labels.csv",
+                          findings={"pleural": "pleural", "cardiac": "cardiac", "edema": "edema",
+                                    "pleural_effusion": "pleural"}),
     "chexpert_valid": dict(img=PROC / "chexpert_valid", labels=PROC / "chexpert_valid/labels.csv",
                            findings={"pleural": "pleural", "cardiac": "cardiac", "edema": "edema",
                                      "pleural_effusion": "pleural"}),

@@ -237,6 +237,14 @@ VinDr-CXR test는 지금까지 한 번도 예측하지 않았다 (label 개수�
   - 보조: CheXpert validation 234장 (전문의 3명 합의, val_labels.csv)
   - CheXpert는 정면(frontal) 영상만 사용. label 대응: 흉막 = Pleural Effusion (CheXpert 전문의 label에 Pleural Other가 있으면 포함),
     심장비대 = Cardiomegaly, 폐부종 = Edema, 민감도 분석 = Pleural Effusion만. 세부는 파일 확인 후 예측 전에 추가 기록
+- CheXpert 세부 (2026-11-20, 파일 구조·영상 수만 확인, label 분포·예측 보기 전에 고정. scripts/build_chexpert_cache.py)
+  - 정면 판정: test는 경로의 viewN_frontal (668장 중 518장), validation은 Frontal/Lateral 열 = Frontal. 한 검사에 정면이 여러 장이면 모두 사용
+  - label: 1만 양성, 나머지(0·빈칸) 음성. 흉막 = Pleural Effusion = 1 또는 Pleural Other = 1, 흉막(민감도) = Pleural Effusion = 1,
+    심장비대 = Cardiomegaly = 1, 폐부종 = Edema = 1. 폐부종은 CheXpert에서만 평가 (VinDr에는 해당 label 없음)
+  - 영상: JPG를 흑백으로 읽어 그대로(plain)와 histogram equalization(eq) 두 가지를 512×512로 축소(BILINEAR),
+    내부 train 1,000장과 평균 히스토그램 L1 거리가 작은 쪽을 사용 (9절 VinDr와 같은 규칙, label·예측은 보지 않음)
+  - 신뢰구간: CheXpert는 환자 단위 bootstrap (같은 환자의 여러 영상을 함께 뽑음, labels.csv의 group), VinDr train은 영상 단위
+  - CheXlocalize의 분할(segmentation) 정답을 이용한 위치 평가는 이 판정에 넣지 않는다 (하게 되면 사후로 표시)
 - (원래 계획) 주 판정 데이터: CheXpert test (전문의 합의 label, 한 번도 보지 않음). label 대응과 세부 사항은 데이터 확인 후,
   예측 전에 이 절에 추가로 고정한다. 보조: VinDr test (새 조건은 처음 평가하지만, 이 방향을 VinDr 보정 결과를 보고 정했으므로 보조),
   내부 test (사후)
