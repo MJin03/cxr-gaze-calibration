@@ -12,6 +12,8 @@
 사용법
     python sweep_smooth.py run
     python sweep_smooth.py report
+    python sweep_smooth.py run --eps 0.02                      (범위 확장)
+    python sweep_smooth.py report --eps 0.02 0.05 0.1 0.2
     python sweep_smooth.py final --choice gaze=0.1 gaze-shuffled=0.1 certainty=0.2 uniform=0.05
 """
 import argparse
@@ -43,7 +45,7 @@ def jobs_for(args):
     if args.action == "final":
         cfg = [(it.split("=")[0], float(it.split("=")[1])) for it in args.choice]
         return cfg, args.seeds or list(range(10))
-    return [(sm, e) for sm in SMOOTHS for e in EPS], args.seeds or [0, 1, 2]
+    return [(sm, e) for sm in SMOOTHS for e in args.eps], args.seeds or [0, 1, 2]
 
 
 def do_run(args):
@@ -82,7 +84,7 @@ def do_report(args):
         if (d / "val_metrics.json").exists():
             rows.append(row(d, "none (fs 그대로)", 0.0, s))
     for sm in SMOOTHS:
-        for e in EPS:
+        for e in args.eps:
             for s in seeds:
                 d = run_dir(sm, e, s)
                 if (d / "val_metrics.json").exists():
@@ -116,6 +118,8 @@ def main():
     ap.add_argument("action", choices=["run", "report", "final"])
     ap.add_argument("--choice", nargs="*", default=[], help="final: 종류=ε_max")
     ap.add_argument("--seeds", type=int, nargs="*")
+    ap.add_argument("--eps", type=float, nargs="*", default=EPS,
+                    help="ε_max 범위. 범위 확장은 run --eps 0.02, 전체 요약은 report --eps 0.02 0.05 0.1 0.2")
     ap.add_argument("--extra", default="", help='train.py에 그대로 넘길 인자. 예: "--max-images 64 --epochs 1"')
     args = ap.parse_args()
     if args.action == "report":
