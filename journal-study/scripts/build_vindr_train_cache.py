@@ -8,6 +8,7 @@ label: 판독의 3명 중 과반수 (판독의 수가 3이 아니면 절반 초�
 출력  ~/X-ray/data/processed/vindr_train3000/ (images_512_plain, images_512_eq, labels.csv, preprocess_choice.json)
 
 사용법  python build_vindr_train_cache.py [--workers 8]
+        python build_vindr_train_cache.py --list vindr_train_3000b.txt --out vindr_train3000b   (11-5절 새 확인용 3,000장)
 """
 import argparse
 import json
@@ -18,14 +19,16 @@ import pandas as pd
 from build_vindr_cache import work
 from vindr_common import PROC, VINDR
 
-OUT = PROC / "vindr_train3000"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--list", default="vindr_train_3000.txt", help="~/X-ray/data/lists/ 안의 목록 파일")
+    ap.add_argument("--out", default="vindr_train3000", help="~/X-ray/data/processed/ 안의 출력 폴더")
     args = ap.parse_args()
-    ids = pd.read_csv(PROC.parent / "lists/vindr_train_3000.txt", header=None)[0].tolist()
+    OUT = PROC / args.out
+    ids = pd.read_csv(PROC.parent / "lists" / args.list, header=None)[0].tolist()
     files = {p.stem: p for p in (VINDR / "train").glob("*.dicom") if p.stat().st_size > 0}
     have = [i for i in ids if i in files]
     print(f"목록 {len(ids)}장 중 받은 파일 {len(have)}장")

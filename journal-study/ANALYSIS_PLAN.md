@@ -335,6 +335,7 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
   a_gaze − a_free는 내부 흉막 |slope−1| −0.121만 유의(그 외 n.s., 앙상블은 대부분 악화).
   smoothing gaze − C1 none AUROC: VinDr test 흉막 +0.024, effusion +0.018 / 내부 흉막 +0.015, 심장비대 +0.016 (ci2 유의)
   → 흉막 판별력 개선은 내부 + 외부 3곳 모두에서 유의. 내부 slope는 0.82~1.28로 1 근처
+- B 보조 (VinDr test, 2026-11-20): 주 판정과 같음. 엔트로피 오류 탐지 AUROC 0.22~0.52, 순위 평균 < 확신도 (모든 조건·finding 유의)
 - 코드 수정: C 표의 intercept(EM 후)가 발산하는 계산 문제(citl 뉴턴 단계 제한 없음) 수정. NLL·ECE·Brier와 주 비교에는 영향 없음
 
 ## 11-4. 사후 진단: 외부 확신 부족의 원인 (2026-11-20, scripts/diagnose_underconfidence.py, 이미 본 데이터 사용)
@@ -354,4 +355,28 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
   → ~/X-ray/data/lists/vindr_train_3000b.txt. label·전처리 규칙은 VinDr train 3,000장과 같음 (판독의 3명 과반수, VinDr test 전처리)
 - 용도: 11-4절 진단에서 나온 개선 방법(판독 방식 보정 등)의 확인용. 방법과 모든 값을 내부 데이터로 정해 이 절에 고정한 뒤 한 번만 평가.
   CheXpert validation도 아직 평가하지 않았으므로 같은 시점에 확인용(보조)으로 함께 평가
+
+## 11-6. 판독 방식 보정 (reader-protocol recalibration) — 확인 평가 전 고정 (2026-11-20, scripts/reader_recalibration.py)
+
+동기: 11-4절 진단 (이미 본 데이터로 착안 → 착안 자체는 사후임을 논문에 명시). 방법과 모든 값은 아래로 고정하고 이후 바꾸지 않는다.
+바꾸면 새 확인용 데이터가 다시 필요하다.
+
+방법
+- q = temperature scaling 후 확률 (내부 val, 대부분 판독의 1명 label에 맞춘 확률)
+- 판독의 k명의 투표를 beta-binomial로 모형화: 판독의 1명의 양성 확률 θ ~ Beta(평균 q, 판독의 간 상관 ρ)
+  보정 확률 = P(k명 중 과반수 양성) = Σ_{v > k/2} BetaBinomial(v; k, q(1−ρ)/ρ, (1−q)(1−ρ)/ρ)
+- ρ: 내부 REFLACX 판독의 5명 영상(내부 test 109장, 확신도 ≥ 3 투표)에서 모델 q가 주어졌을 때 투표 가능도 최대.
+  조건·seed·finding마다 따로, 격자 {0.001, 0.005, 0.01, 0.02, …, 0.99}. 외부 label 사용 없음
+- k (데이터 label 방식, 데이터 설명 기준): VinDr train·새 VinDr train 3명 과반수(직접 계산), CheXpert validation 3명(다수결),
+  CheXpert test 5명 과반수, VinDr test 5명 합의(투표가 아닌 합의라 k=5는 근사, 사후 참고용)
+- 앙상블: seed별 보정 확률의 logit 평균
+- 모의 실험 확인: ρ = 0.3인 판독의 투표를 만들면 ρ 추정 0.30, 3명 과반수 기준 slope가 TS 1.15 → 보정 0.99 (독립 가정 0.71로 과보정)
+
+평가 (확인용, 한 번만)
+- 확인 데이터: 주 = 새 VinDr train 3,000장(vindr_train_b), 보조 = CheXpert validation 202장. 사후 참고: CheXpert test, VinDr train, VinDr test
+- 조건: c1_none, fs, gaze(smoothing), uniform, a_gaze, a_free. 주 조건 = fs, c1_none
+- 비교 (같은 조건 안): 보정 − TS, 보정 − raw (주), 독립 가정(ρ=0) − TS (민감도). 지표: NLL, |slope − 1| (주), ECE (보조)
+- 신뢰구간: 영상(CheXpert는 환자) + seed bootstrap 2000회 (ci2), 앙상블은 영상만
+- 판정: vindr_train_b에서 fs와 c1_none 모두, 흉막·심장비대 각각 "보정 − TS"의 NLL과 |slope − 1|이 함께 유의하게 음수면
+  그 finding에서 "개선". 반대 방향으로 유의하면 "악화". 나머지는 "판단 불가". AUROC는 단조 변환이라 바뀌지 않음
 
