@@ -53,10 +53,15 @@ def main():
         if not (d / "best.pt").exists():
             continue
         if out.exists() and not args.overwrite:
-            if pd.read_csv(out, usecols=["image_id"]).image_id.astype(str).tolist() == [str(i) for i in ids]:
+            pool = json.load(open(d / "config.json")).get("pool", "avg")
+            need_att = pool in ("attn3", "hybrid3") and not (d / f"att_{args.dataset}.npy").exists()
+            if pd.read_csv(out, usecols=["image_id"]).image_id.astype(str).tolist() != [str(i) for i in ids]:
+                print(f"[{k}/{len(jobs)}] 기존 파일의 영상 목록이 달라 다시 예측: {c} seed {s}")
+            elif need_att:
+                print(f"[{k}/{len(jobs)}] attention 파일이 없어 다시 예측: {c} seed {s}")
+            else:
                 print(f"[{k}/{len(jobs)}] 이미 있음: {c} seed {s}")
                 continue
-            print(f"[{k}/{len(jobs)}] 기존 파일의 영상 목록이 달라 다시 예측: {c} seed {s}")
         cfg = json.load(open(d / "config.json"))
         size = int(cfg.get("img_size", 512))
         if size not in cache:
