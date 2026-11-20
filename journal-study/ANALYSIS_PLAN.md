@@ -316,3 +316,20 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
 흉막 241, effusion 136, 심장비대 367, 전처리 eq) / 보조 = CheXpert validation(정면 202장), VinDr test, 내부 test.
 11절 smoothing과 11-2절 A·B·C를 같은 실행에서 한 번에 평가하고, 이후 추가 분석은 사후로 표시한다
 
+## 11-3. 주 판정 결과 (2026-11-20, CheXpert test 518장 + VinDr train 3,000장, 한 번 평가)
+
+판정 기준(11절 3, 11-2절): seed 평균 ci2. 11절 smoothing과 11-2절 A 모두 "시선이 보정을 개선한다" 기준 미충족.
+- 11절 gaze − uniform (주): 두 데이터 모든 finding에서 NLL·|slope−1| 차이 없음
+- 11절 gaze − gaze-shuffled (주): |slope−1| 개선 (CheXpert 심장비대 −0.337, 부종 −0.285 / VinDr 흉막 −0.199, 심장비대 −0.328, effusion −0.298),
+  VinDr 흉막 NLL −0.014. 단 셔플은 ε 0.1, gaze·uniform은 ε 0.05라 smoothing 강도 차이로 설명되고, 같은 강도의 uniform과는 차이 없음
+- 11-2절 a_gaze − a_free (주): 대부분 차이 없음, CheXpert 심장비대 |slope−1| +0.277 (나빠짐). 앙상블은 모든 finding에서 slope가 1에서 더 멀어짐
+- 11-2절 a_gaze − a_gaze-shuffled (주): 보정 차이 없음, VinDr 흉막 AUROC +0.018
+- 모든 모델이 두 데이터에서 확신 부족(slope > 1). 확신을 줄이는 방법(smoothing, logit 축소)은 외부에서 방향이 맞지 않음
+- 판별력: smoothing gaze − C1 none AUROC CheXpert 흉막 +0.018, effusion +0.018 / VinDr 흉막 +0.025, effusion +0.023 (ci2 유의)
+  → 8절 VinDr test의 fs 판별력 개선이 새 외부 데이터 두 곳에서 재현됨 (보조 비교)
+- B (보조): attention 엔트로피의 오류 탐지 AUROC 0.25~0.55 (0.5 아래, 예상과 반대 방향). 순위 평균은 확신도만보다 모든 경우 나쁨.
+  엔트로피 분포가 내부 val과 달라 referral 비율이 25%를 넘어(최대 0.40) missed 비교는 해석 불가
+- C (보조): EM 추정 양성 비율이 크게 틀림 (VinDr 심장비대 0.001 vs 실제 0.122), NLL이 모든 조건에서 나빠짐.
+  새 병원에서 모델 보정 자체가 바뀌어(확신 부족) label shift 가정이 성립하지 않음
+- 코드 수정: C 표의 intercept(EM 후)가 발산하는 계산 문제(citl 뉴턴 단계 제한 없음) 수정. NLL·ECE·Brier와 주 비교에는 영향 없음
+

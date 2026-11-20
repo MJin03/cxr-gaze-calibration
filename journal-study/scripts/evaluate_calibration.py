@@ -64,12 +64,12 @@ def slope_fit(z, y, w, iters=30):
     return a, b
 
 
-def citl(z, y, w, iters=30):
+def citl(z, y, w, iters=100):
     """기울기 1 고정 절편 (calibration-in-the-large)."""
     a = 0.0
     for _ in range(iters):
         p = sig(a + z)
-        step = (w * (y - p)).sum() / ((w * p * (1 - p)).sum() + 1e-12)
+        step = float(np.clip((w * (y - p)).sum() / ((w * p * (1 - p)).sum() + 1e-12), -2, 2))  # 확률이 0·1 근처면 발산하므로 제한
         a += step
         if abs(step) < 1e-8:
             break
