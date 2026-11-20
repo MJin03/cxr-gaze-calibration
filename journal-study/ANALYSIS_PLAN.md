@@ -355,6 +355,7 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
   → ~/X-ray/data/lists/vindr_train_3000b.txt. label·전처리 규칙은 VinDr train 3,000장과 같음 (판독의 3명 과반수, VinDr test 전처리)
 - 용도: 11-4절 진단에서 나온 개선 방법(판독 방식 보정 등)의 확인용. 방법과 모든 값을 내부 데이터로 정해 이 절에 고정한 뒤 한 번만 평가.
   CheXpert validation도 아직 평가하지 않았으므로 같은 시점에 확인용(보조)으로 함께 평가
+- 다운로드 완료 (2026-11-21): 3,000장 모두 받음 (첫 시도에서 55장이 연결 문제로 빠져 같은 목록으로 다시 받음, 덜 받은 파일 없음)
 
 ## 11-6. 판독 방식 보정 (reader-protocol recalibration) — 확인 평가 전 고정 (2026-11-20, scripts/reader_recalibration.py)
 
