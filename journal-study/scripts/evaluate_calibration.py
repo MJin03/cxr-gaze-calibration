@@ -10,7 +10,12 @@
     NLL 차이 (음수면 앞이 좋음), |slope − 1| 차이 (음수면 앞이 1에 더 가까움), AUROC 차이 (양수면 앞이 좋음)
     bootstrap 2000회: 내부는 환자, 외부는 영상 단위. seed 평균은 ci2(+조건별 seed 복원추출), 앙상블은 영상(환자)만
 
-사용법  python evaluate_calibration.py --dataset internal|vindr_test|vindr_train|chexpert_valid
+11-2절 C (보조, 외부 데이터만): label 없는 EM 재보정 (Saerens 2002)
+    temperature 없는 확률로 새 병원의 양성 비율 π를 EM으로 추정 (시작값 = 내부 train 양성 비율 π0)
+    → logit + logit(π) − logit(π0). 상수 이동이라 calibration slope와 AUROC는 바뀌지 않고 intercept·NLL·ECE·Brier만 바뀜
+    결과: per_run.csv의 *_em 열, prior_em(추정 π), 화면의 C 표. 조건 비교(주장)에는 쓰지 않음
+
+사용법  python evaluate_calibration.py --dataset internal|chexpert_test|vindr_train|chexpert_valid|vindr_test
 """
 import argparse
 import json
@@ -18,7 +23,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from cal_common import COMPARISONS, CONDITIONS, DATASETS, RESULTS, S10, run_dir
+from cal_common import COMPARISONS, CONDITIONS, DATASETS, RESULTS, S10, run_dir, train_prevalence
 
 INTERNAL_F = {"pleural": "pleural", "cardiac": "cardiac", "edema": "edema"}
 EPS = 1e-7
@@ -98,6 +103,28 @@ class AUC:
         return float((p * (np.cumsum(n) - n + 0.5 * n)).sum() / (tp * tn))
 
 
+def em_prior(z, pi0, iters=1000, tol=1e-8):
+    """Saerens EM: 확률 sig(z)가 양성 비율 pi0에 맞춰져 있다고 보고 새 데이터의 양성 비율을 추정."""
+    p, pi = sig(z), pi0
+    for _ in range(iters):
+        a = (pi / pi0) * p
+        q = a / (a + (1 - pi) / (1 - pi0) * (1 - p))
+        new = float(q.mean())
+        if abs(new - pi) < tol:
+            pi = new
+            break
+        pi = new
+    return float(np.clip(pi, 1e-3, 1 - 1e-3))  # 판별력이 거의 없으면 EM이 0이나 1로 가므로 끝을 막음
+
+
+def em_metrics(z, y, pi0):
+    pi = em_prior(z, pi0)
+    ze = z + logit(np.array(pi)) - logit(np.array(pi0))
+    w, p = np.ones(len(y)), sig(ze)
+    return {"prior_em": pi, "citl_em": citl(ze, y, w), "nll_em": nll(p, y, w), "ece_em": ece(p, y, w),
+            "brier_em": float(((p - y) ** 2).mean())}
+
+
 def all_metrics(z_raw, z_ts, y, w=None):
     w = np.ones(len(y)) if w is None else w
     out = {}
@@ -143,13 +170,13 @@ def load(dataset, allow_missing):
                 t = t.set_index("image_id").loc[labels.image_id].reset_index()
                 ylab = {f: labels[f].values for f in fmap}
             data[(c, s)] = {f: dict(zr=t[f"logit_{m}"].values.astype(float), zt=t[f"logit_{m}"].values / temp[m],
-                                    y=ylab[f].astype(float)) for f, m in fmap.items()}
+                                    y=ylab[f].astype(float), m=m) for f, m in fmap.items()}
             ok.append(s)
         if ok:
             seeds[c] = ok
             data[(c, "ens")] = {f: dict(zr=logit(np.mean([sig(data[(c, s)][f]["zr"]) for s in ok], axis=0)),
                                         zt=logit(np.mean([sig(data[(c, s)][f]["zt"]) for s in ok], axis=0)),
-                                        y=data[(c, ok[0])][f]["y"]) for f in fmap}
+                                        y=data[(c, ok[0])][f]["y"], m=fmap[f]) for f in fmap}
     return data, seeds, list(fmap), groups
 
 
@@ -166,7 +193,10 @@ def main():
     n_img = len(groups)
     print(f"[{out.name}] 영상 {n_img}장, 조건 {len(seeds)}개, finding {findings}")
 
-    rows = [{"cond": c, "seed": str(s), "finding": f, **all_metrics(data[(c, s)][f]["zr"], data[(c, s)][f]["zt"], data[(c, s)][f]["y"])}
+    external = args.dataset != "internal"
+    pi0 = train_prevalence() if external else None
+    rows = [{"cond": c, "seed": str(s), "finding": f, **all_metrics(data[(c, s)][f]["zr"], data[(c, s)][f]["zt"], data[(c, s)][f]["y"]),
+             **(em_metrics(data[(c, s)][f]["zr"], data[(c, s)][f]["y"], pi0[data[(c, s)][f]["m"]]) if external else {})}
             for c in seeds for s in seeds[c] + ["ens"] for f in findings]
     per = pd.DataFrame(rows)
     per.to_csv(out / "per_run.csv", index=False)
@@ -232,6 +262,23 @@ def main():
                 row[name] = f"{d[k].mean():.3f}±{d[k].std():.3f} ({en.loc[(c, f), k]:.3f})"
             tab.append(row)
         print(pd.DataFrame(tab).to_string(index=False))
+    if external:
+        print("\n=== C (보조): label 없는 EM 재보정 — temperature 없는 값의 seed 평균 (조정 전 → 후). slope·AUROC는 바뀌지 않음")
+        print("    내부 train 양성 비율 π0: " + ", ".join(f"{k} {v:.3f}" for k, v in pi0.items()))
+        for f in findings:
+            y0 = data[(conds[0], seeds[conds[0]][0])][f]["y"]
+            tab = []
+            for c in CONDITIONS:
+                if c not in seeds:
+                    continue
+                d = so[(so.cond == c) & (so.finding == f)]
+                tab.append({"조건": c, "실제 비율": f"{y0.mean():.3f}", "추정 π": f"{d.prior_em.mean():.3f}",
+                            "intercept": f"{d.citl_raw.mean():+.3f} → {d.citl_em.mean():+.3f}",
+                            "NLL": f"{d.nll_raw.mean():.4f} → {d.nll_em.mean():.4f}",
+                            "ECE": f"{d.ece_raw.mean():.3f} → {d.ece_em.mean():.3f}",
+                            "Brier": f"{d.brier_raw.mean():.4f} → {d.brier_em.mean():.4f}"})
+            print(f"\n[{f}]")
+            print(pd.DataFrame(tab).to_string(index=False))
     print("\n=== 비교 (앞 − 뒤). NLL·|slope−1|은 음수, AUROC는 양수가 앞 조건이 좋음. ✓ = CI가 0을 포함하지 않음")
     names = {"nll_raw": "NLL", "abs_slope_minus1_raw": "|slope−1|", "auroc": "AUROC"}
     for f in findings:

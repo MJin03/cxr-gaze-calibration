@@ -270,6 +270,23 @@ A. 난이도 예측 헤드 + 영상별 logit 축소 (train.py --diff-target, --d
 - 정답: gaze(시선 난이도 d, 그 finding을 말한 train 영상만) / gaze-shuffled(다른 환자의 d) / certainty(u, REFLACX만) /
   free(같은 구조, 난이도 지도 학습 없음). 난이도 loss = BCE(d̂, 정답) × μ
 - μ {0.1, 0.3, 1.0} × seed 0~2, 조건마다 val NLL 최저(같으면 val AUROC) → seed 0~9. 범위 끝에서 선택되면 같은 범위로 한 칸 확장
+- μ 결과 (val, seed 0~2, val NLL): gaze 0.1 0.3363 (SD 0.0155) / gaze-shuffled 0.3 0.3298 / certainty 1.0 0.3274 / free 0.3344
+  (참고: fs 그대로 0.3309, 11절 smoothing gaze 0.05 0.3264). gaze는 아래 끝, certainty는 위 끝에서 선택
+  → 11절과 같이 네 조건 모두 μ 0.03, 3.0 추가 (2026-11-20, 주 판정 데이터 보기 전)
+  - 진단: gaze 난이도 loss(BCE)가 0.686~0.690으로, 상수 0.5 예측(ln2 = 0.693)과 거의 같음 (완전 예측 하한 ≈ 0.5).
+    셔플은 0.694 → 영상 특징으로 시선 난이도를 거의 예측하지 못함. 결과 해석 시 함께 보고
+- 확장 결과 (μ 0.03~3.0): gaze 3.0 0.3224 (SD 0.0078, 전체 최저) / gaze-shuffled 0.3 0.3298 / certainty 1.0 0.3274 / free 0.3344.
+  gaze가 다시 위 끝(3.0)에서 선택 → 같은 규칙으로 세 조건 모두 μ 10 추가 (주 판정 데이터 보기 전).
+  μ 10이 마지막 확장이며, 10에서 선택되어도 더 넓히지 않고 10을 쓴다 (난이도 loss가 분류 loss의 약 20배가 되는 지점)
+  - 진단: μ 3에서 gaze 난이도 loss 0.680 (상수 예측 대비 설명력 약 7%), 셔플 μ 3은 0.694 (설명력 없음)
+  - 주의: 5~6개 μ 중 최저값을 고르므로 seed 0~2 val NLL은 낙관적일 수 있음 → seed 0~9 본 학습의 val 결과를 함께 보고
+- μ 10 결과: gaze 0.3402, gaze-shuffled 0.3345, certainty 0.3631 → 세 조건 모두 범위 안쪽에서 선택, 확장 종료.
+  확정 (2026-11-20): A-gaze μ 3 / A-gaze-shuffled μ 0.3 / A-certainty μ 1 / A-free → seed 0~9 (sweep_diff.py final)
+- 본 학습 val 결과 (seed 0~9, val NLL / 흉막·심장비대 AUROC): A-gaze 0.3340 ± 0.0108 / 0.8864, A-free 0.3396 ± 0.0161 / 0.8904,
+  A-gaze-shuffled 0.3394 ± 0.0139 / 0.8865, A-certainty 0.3348 ± 0.0100 / 0.8872, fs 그대로 0.3374 / 0.8850, smoothing gaze 0.3345 / 0.8903.
+  seed 0~2 값보다 모든 조건이 0.006~0.012 높아짐 (A-gaze 0.3224 → 0.3340) → μ 선택의 낙관 편향과 seed 0~2가 전반적으로 좋았던 것이 함께 확인됨.
+  A-gaze는 val NLL이 가장 낮지만 차이가 seed 표준편차보다 작고, AUROC는 A-free보다 0.004 낮음.
+  (report의 "조건별 선택" 줄은 seed 수가 다른 행이 섞여 있어 쓰지 않음. μ는 위 확정값 유지)
 - 주 비교: A-gaze − A-free (난이도 지도 학습의 효과), A-gaze − A-gaze-shuffled (시선 내용의 효과)
   보조: A-gaze − A-certainty, A-gaze − smoothing gaze(11절), A-gaze − fs, A-gaze − C1 none
 - 지표·판정은 11절과 같음 (temperature 없는 calibration slope와 NLL, ci2)
@@ -279,9 +296,23 @@ B. attention 퍼짐을 불확실성으로 (보조, 학습 없음)
 - 비교 점수: 확신도만(1 − max(p, 1 − p)) / 엔트로피만 / 둘의 순위 평균 (가중치 조정 없음)
 - 지표: 오류 탐지 AUROC, AURC, 자동 문턱(10절, W500) 25% referral에서의 missed
 - 대상: A 조건들, smoothing gaze, fs (외부 데이터 예측 시 attention 저장: predict_external.py)
+- 세부 (2026-11-20, 주 판정 데이터 예측 전 고정. scripts/evaluate_uncertainty.py)
+  - 확률은 temperature scaling 후 값(10절과 같음), 오류 = (p ≥ 0.5) ≠ label
+  - 엔트로피: 그 finding의 attention logit(16×16) softmax 엔트로피 / log 256
+  - 순위 평균의 기준 분포와 자동 문턱 시작값: 같은 run의 내부 val 영상 점수 (predict_external.py --dataset internal_val, label 사용 없음)
+  - 자동 문턱: 최근 500장 중 점수 상위 25%면 referral, 무작위 순서 20번 평균. 같은 (finding, 점수)는 모든 조건이 같은 순서
+  - 앙상블: 확률·엔트로피 각각 seed 평균 후 점수 계산
+  - 비교: 같은 조건 안에서 순위 평균 − 확신도, 엔트로피 − 확신도 (ci2). 조건 간 주장에는 쓰지 않음
 
 C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
 - 새 병원의 label 없는 test 영상 전체로 양성 비율을 EM(Saerens 2002)으로 추정해 확률을 조정
   (내부 train 양성 비율을 사전확률로 시작). 조정 전후의 calibration slope, intercept, NLL을 보고
 - 모든 조건에 같은 방식으로 적용하며, "gaze가 보정을 개선한다"는 주장의 근거로 쓰지 않는다
+- 세부 (2026-11-20, 예측 전 고정. evaluate_calibration.py): temperature 없는 확률에 적용, 시작값 π0 = 내부 train 양성 비율(finding별),
+  수렴 1e-8 또는 1000회, 추정 π는 0.001~0.999로 제한. 조정은 logit + logit(π) − logit(π0)인 상수 이동이라
+  calibration slope와 AUROC는 그대로이고 intercept, NLL, ECE, Brier만 바뀜
+
+평가 데이터와 순서 (2026-11-20 고정): 주 = CheXpert test(정면 518장, 환자 단위), VinDr train 3,000장(영상 단위, 판독의 3명 과반수:
+흉막 241, effusion 136, 심장비대 367, 전처리 eq) / 보조 = CheXpert validation(정면 202장), VinDr test, 내부 test.
+11절 smoothing과 11-2절 A·B·C를 같은 실행에서 한 번에 평가하고, 이후 추가 분석은 사후로 표시한다
 

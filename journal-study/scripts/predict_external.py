@@ -4,7 +4,9 @@
 출력  각 run 폴더에 preds_{dataset}.csv (image_id, logit_pleural, logit_cardiac, logit_edema)
       hybrid3 모델은 att_{dataset}.npy (finding별 attention logit, N×3×16×16, float16) — 11-2절 B 분석용
 
-사용법  python predict_external.py --dataset vindr_test|vindr_train|chexpert_valid [--overwrite]
+      internal_val: 내부 val 영상 (11-2절 B의 기준 분포용, attention이 있는 조건만)
+
+사용법  python predict_external.py --dataset chexpert_test|vindr_train|chexpert_valid|vindr_test|internal_val [--overwrite]
 """
 import argparse
 import json
@@ -15,24 +17,30 @@ import pandas as pd
 import torch
 from PIL import Image
 
-from cal_common import CONDITIONS, DATASETS, FINDINGS_MODEL, S10, run_dir
+from cal_common import CONDITIONS, DATASETS, FINDINGS_MODEL, INTERNAL_VAL, PROC, S10, UNCERTAINTY_CONDS, run_dir
 from train import Net
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", choices=list(DATASETS), required=True)
+    ap.add_argument("--dataset", choices=list(DATASETS) + [INTERNAL_VAL], required=True)
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--allow-missing", action="store_true", help="동작 확인용")
     args = ap.parse_args()
-    ds = DATASETS[args.dataset]
-    choice = json.load(open(ds["img"] / "preprocess_choice.json"))["choice"]
-    img_dir = ds["img"] / f"images_512_{choice}"
-    ids = pd.read_csv(ds["labels"]).image_id.tolist()
+    if args.dataset == INTERNAL_VAL:
+        split = pd.read_csv(PROC / "split_seed42.csv")
+        ids, img_dir, choice = sorted(split.loc[split.split == "val", "dicom_id"]), PROC / "images_512", "내부"
+        conds = UNCERTAINTY_CONDS
+    else:
+        ds = DATASETS[args.dataset]
+        choice = json.load(open(ds["img"] / "preprocess_choice.json"))["choice"]
+        img_dir = ds["img"] / f"images_512_{choice}"
+        ids = pd.read_csv(ds["labels"]).image_id.tolist()
+        conds = list(CONDITIONS)
     print(f"{args.dataset}: {len(ids)}장, 전처리 {choice}")
 
-    jobs = [(c, s) for c in CONDITIONS for s in S10]
+    jobs = [(c, s) for c in conds for s in S10]
     missing = [run_dir(c, s) for c, s in jobs if not (run_dir(c, s) / "best.pt").exists()]
     if missing and not args.allow_missing:
         raise SystemExit(f"학습된 run이 없습니다 ({len(missing)}개). 예: {missing[0]}")
@@ -45,8 +53,10 @@ def main():
         if not (d / "best.pt").exists():
             continue
         if out.exists() and not args.overwrite:
-            print(f"[{k}/{len(jobs)}] 이미 있음: {c} seed {s}")
-            continue
+            if pd.read_csv(out, usecols=["image_id"]).image_id.astype(str).tolist() == [str(i) for i in ids]:
+                print(f"[{k}/{len(jobs)}] 이미 있음: {c} seed {s}")
+                continue
+            print(f"[{k}/{len(jobs)}] 기존 파일의 영상 목록이 달라 다시 예측: {c} seed {s}")
         cfg = json.load(open(d / "config.json"))
         size = int(cfg.get("img_size", 512))
         if size not in cache:

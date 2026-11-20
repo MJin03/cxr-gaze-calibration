@@ -24,10 +24,11 @@
 | [compare_stageE.py](compare_stageE.py) | E단계: IWAIT 보고값·3분류 재현·사전 고정·개선 설정을 내부/VinDr, 고정/자동 문턱으로 한 표에 정리 (저장 결과만 사용) |
 | [build_gaze_difficulty.py](build_gaze_difficulty.py) | 11절: finding별 시선 창에서 영상별 난이도 d(머문 시간·다시 말한 횟수·퍼짐)와 판독의 확신도 난이도 u 계산 |
 | [sweep_smooth.py](sweep_smooth.py) | 11절: fs 위에 난이도 가중 label smoothing (gaze / gaze-shuffled / certainty / uniform) 실행·요약 |
-| [cal_common.py](cal_common.py) | 11절 공용 설정: smoothing 조건·비교·외부 데이터 목록 고정 |
-| [predict_external.py](predict_external.py) | 11절: 외부 데이터(vindr_test / vindr_train / chexpert_valid) 예측 (재학습 없음) |
+| [cal_common.py](cal_common.py) | 11·11-2절 공용 설정: smoothing 조건, A 조건(난이도 헤드), 비교, 외부 데이터 목록, B 대상 조건 고정 |
+| [predict_external.py](predict_external.py) | 11절: 외부 데이터(chexpert_test / vindr_train / chexpert_valid / vindr_test) 예측, attention 저장. internal_val = B의 기준 분포용 내부 val 예측 |
 | [build_vindr_train_cache.py](build_vindr_train_cache.py) | 11절: VinDr train 무작위 3,000장 → 512 PNG, 판독의 3명 과반수 label |
-| [evaluate_calibration.py](evaluate_calibration.py) | 11절: calibration slope·NLL·intercept·ECE·Brier·AUROC, 조건 비교 (환자/영상+seed bootstrap) |
+| [evaluate_calibration.py](evaluate_calibration.py) | 11절: calibration slope·NLL·intercept·ECE·Brier·AUROC, 조건 비교 (환자/영상+seed bootstrap). 11-2절 C: label 없는 EM 재보정 |
+| [evaluate_uncertainty.py](evaluate_uncertainty.py) | 11-2절 B: attention 엔트로피·확신도·순위 평균 불확실성 점수의 오류 탐지 AUROC, AURC, 자동 문턱 missed |
 | [download_chexpert_valid.py](download_chexpert_valid.py) | 11절: Redivis(AIMI) CheXpert Plus에서 validation PNG 234장과 label 폴더만 다운로드 (OAuth 로그인) |
 | [build_chexpert_cache.py](build_chexpert_cache.py) | 11절: CheXlocalize 묶음의 CheXpert test·validation 정면 영상을 512 PNG(plain·eq)로 변환, 전문의 label 정리(환자 번호 포함), 전처리 선택 |
 | [sweep_diff.py](sweep_diff.py) | 11-2절: fs + 난이도 예측 헤드·영상별 logit 축소 (gaze / gaze-shuffled / certainty / free) 실행·요약 |
