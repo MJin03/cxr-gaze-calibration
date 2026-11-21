@@ -80,8 +80,9 @@ def ece(p, y, w, bins=15):
     edges, e = np.linspace(0, 1, bins + 1), 0.0
     for lo, hi in zip(edges[:-1], edges[1:]):
         m = (p > lo) & (p <= hi)
-        if m.any():
-            e += w[m].sum() / w.sum() * abs((w[m] * y[m]).sum() / w[m].sum() - (w[m] * p[m]).sum() / w[m].sum())
+        ws = w[m].sum()
+        if ws > 0:  # bootstrap에서 그 구간 영상이 하나도 안 뽑히면 건너뜀 (0으로 나누기 방지)
+            e += ws / w.sum() * abs((w[m] * y[m]).sum() / ws - (w[m] * p[m]).sum() / ws)
     return float(e)
 
 
