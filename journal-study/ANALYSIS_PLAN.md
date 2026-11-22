@@ -414,10 +414,45 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
   VinDr 3개는 같은 병원이므로 "독립 병원 2곳(VinDr, CheXpert)"임을 명시하고, 병원별(VinDr 3개 통합 / CheXpert 2개 통합) 결과도 함께 제시
 - 해석: 주 비교 2개가 통합 추정에서 유의하고 데이터별 방향이 일관되면 "외부에서 일관된 시선 효과". 비열등은 통합 하한 > −0.02
 
+### 12절 결과 (2026-11-22, 외부 5곳: CheXpert test·validation, VinDr train·새 train·test)
+- AUROC 통합 (random-effects, seed 평균 차이 [95% CI]):
+  - fs − c1_none: 흉막 +0.018 [+0.008, +0.029]✓, 심장비대 +0.018 [+0.009, +0.028]✓, effusion +0.011✓, 폐부종(CheXpert 2곳) +0.020✓
+  - fs − fs_shuffled: 흉막 +0.027✓, 심장비대 +0.025✓, effusion +0.023✓ (VinDr·CheXpert 병원별 통합 모두 유의), 폐부종 +0.009 (n.s.)
+  - fs − real_global: 흉막 +0.000 (차이 없음), 심장비대 +0.025✓ (병원별 모두 유의) → finding별 분리는 심장비대에서만 이득
+  - fs − hyb_none: 흉막 +0.033✓, 심장비대 +0.034✓
+  - fs − ellipse: 흉막 +0.009 [+0.001, +0.016] 비열등✓(통합 하한 > 0), 심장비대 +0.005 비열등✓, effusion 비열등✓, 폐부종 −0.007 (하한 −0.024, 비열등 아님)
+  - I² 0~33%: 데이터 간 이질성 낮음. CheXpert만 통합 시 흉막 fs − c1 +0.008 (n.s.), 나머지 주 비교는 병원별로도 유의
+- 자동 문턱 missed (보조): 흉막 fs − c1 −0.034✓, fs − shuffled −0.031✓, 심장비대 fs − shuffled −0.031✓.
+  폐부종은 fs가 더 놓침(+0.084✓): fs의 폐부종 확률이 외부에서 확신 부족(slope 1.67)이라 0.5 문턱 아래로 떨어지는 양성이 많기 때문 (순위 지표 AUROC는 개선)
+- 결론: 시선 학습의 판별력 개선과 "시선 내용" 효과가 독립 병원 2곳·데이터 5곳에서 일관되게 재현됨. 시선은 의사 타원 표시와 비열등
+- 11-6 사후 참고 (보정 − TS): 흉막·effusion은 CheXpert test·VinDr train·VinDr test에서 대부분 NLL·slope 함께 개선(✓),
+  심장비대·폐부종은 모든 데이터에서 NLL 악화. 단 raw 대비로는 이득이 거의 없음(새 VinDr·CheXpert validation 기준)
+
+## 13. 정보 수준별 베이지안 재보정 (2026-11-22, 실행 전에 고정. scripts/bayes_recalibration.py)
+
+동기 (사후 착안): 11절~11-6절에서 label 없는 보정은 모두 실패. 외부 오보정 = 퍼짐 + 기저율. 병원이 가진 정보(없음 / 유병률 / label n장)에 따라
+방법을 따로 고르는 대신, 하나의 베이지안 틀로 정보가 들어오는 만큼 갱신한다. 학습·모델 변경 없음.
+- 모형: p = sigmoid(a + b·u), 사전 a ~ N(0, 1²), b ~ N(1, 0.5²) (정보 없으면 기준 확률 그대로). MAP 추정
+  - u(기준 logit): reader = 11-6절 판독 방식 보정 확률의 logit (대상의 판독 방식 k, 내부 추정 ρ) / ts = 내부 TS logit (비교)
+  - 유병률 가능도: 대상 영상 평균 예측 확률 ~ N(π_기록, (0.25·π_기록)²) / label 가능도: Bernoulli
+- 현실적 평가: 같은 병원의 다른 묶음을 "과거 기록"으로 사용 (평가 묶음의 정답은 쓰지 않음)
+  VinDr(train, 새 train, test) 6쌍, CheXpert(validation, test) 2쌍. π_기록 = 기록 묶음 양성 비율, label n장 = 기록 묶음에서 무작위 추출(100번)
+- 방법: 정보 없음 raw·ts·reader / 유병률 prev_ts·prev_reader (+ π × 0.5·0.75·1.25·1.5 민감도) /
+  label n ∈ {10, 25, 50, 100, 200}: ts_refit·platt·bayes_ts·bayes_reader·bayes_reader_prev / 참고 하한 oracle(대상 전체로 맞춘 platt)
+- 조건 fs, c1_none / finding 흉막, 심장비대, effusion, 폐부종(CheXpert) / 지표 NLL(주), |slope−1|, intercept, ECE
+- 판정 (쌍·조건·seed 평균, finding별):
+  H1 유병률: prev_reader의 NLL이 raw보다 낮고, 쌍의 과반수에서 낮으면 "유병률 하나로 개선"
+  H2 label 효율: n ≤ 50에서 bayes_reader가 platt과 ts_refit보다 NLL 낮으면 "적은 label에서 베이지안 틀이 유리",
+     bayes_reader < bayes_ts이면 "판독 방식 보정이 좋은 사전 믿음"
+  H3 견고성: π × 0.75, 1.25에서도 prev_reader가 raw보다 NLL 낮은지
+- 한계: VinDr 3묶음은 label 방식이 다름(train 3명 투표 / test 5명 합의) → 기록과 대상의 정의 차이가 그대로 포함됨(현실적 오차로 봄)
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
-1. 12절 판별력 외부 검증 확장 + 통합
-2. 13절 CheXlocalize 전문의 분할로 위치 평가 (계획은 실행 전에 별도 고정)
-3. (여유 시) 소수 label 재보정 곡선
-4. 14절 B: 두 번째 backbone(예: ConvNeXt)으로 c1_none, fs, fs_shuffled 반복. 설정은 내부 val로만, 세 조건에 같은 탐색 범위.
+1. 12절 판별력 외부 검증 확장 + 통합 (완료)
+2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)
+3. 순서형 출력(판독 확신도 기준별 확률) 학습 → 정보 없는 병원 개선 시도 (권장 순서 2, 재학습)
+4. PadChest(세 번째 병원)로 프로토콜·B 최종 확인 (권장 순서 3)
+5. CheXlocalize 전문의 분할로 위치 평가
+6. B: 두 번째 backbone(예: ConvNeXt)으로 c1_none, fs, fs_shuffled 반복. 설정은 내부 val로만, 세 조건에 같은 탐색 범위.
    외부 데이터는 B 설계에 쓰지 않았으므로 B의 확인 데이터로 사용 가능. 계획은 실행 전에 별도 고정
 

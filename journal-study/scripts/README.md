@@ -32,6 +32,7 @@
 | [diagnose_underconfidence.py](diagnose_underconfidence.py) | 사후 진단: 외부 확신 부족(slope > 1)의 원인 — 데이터별 slope, VinDr 판독의 비율 label 기준 slope, 일치도별 slope, 앙상블 방식 |
 | [reader_recalibration.py](reader_recalibration.py) | 11-6절: 판독 방식 보정. fit = 내부 판독의 5명 영상으로 판독의 간 상관 ρ 추정, eval = 외부 데이터(k명 과반수)에서 보정 전후 비교 |
 | [evaluate_discrimination.py](evaluate_discrimination.py) | 12절: 8·9절 조건의 판별력(AUROC, 자동 문턱 missed)을 외부 데이터 여러 곳에서 비교하고 random-effects로 통합 |
+| [bayes_recalibration.py](bayes_recalibration.py) | 13절: 정보 수준별(없음/유병률/label n장) 베이지안 재보정, 같은 병원 다른 묶음을 과거 기록으로 쓰는 평가 |
 | [download_chexpert_valid.py](download_chexpert_valid.py) | 11절: Redivis(AIMI) CheXpert Plus에서 validation PNG 234장과 label 폴더만 다운로드 (OAuth 로그인) |
 | [build_chexpert_cache.py](build_chexpert_cache.py) | 11절: CheXlocalize 묶음의 CheXpert test·validation 정면 영상을 512 PNG(plain·eq)로 변환, 전문의 label 정리(환자 번호 포함), 전처리 선택 |
 | [sweep_diff.py](sweep_diff.py) | 11-2절: fs + 난이도 예측 헤드·영상별 logit 축소 (gaze / gaze-shuffled / certainty / free) 실행·요약 |
