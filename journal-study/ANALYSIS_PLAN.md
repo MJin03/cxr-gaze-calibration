@@ -381,3 +381,43 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
 - 판정: vindr_train_b에서 fs와 c1_none 모두, 흉막·심장비대 각각 "보정 − TS"의 NLL과 |slope − 1|이 함께 유의하게 음수면
   그 finding에서 "개선". 반대 방향으로 유의하면 "악화". 나머지는 "판단 불가". AUROC는 단조 변환이라 바뀌지 않음
 
+### 11-6 확인 결과 (2026-11-22, 새 VinDr train 2,997장, 규칙대로 한 번 평가)
+- 판정 (fs, c1_none, 보정 − TS, seed ci2):
+  - 흉막: NLL 유의하게 감소 (c1 −0.0079, fs −0.0078), |slope−1|은 n.s. (c1 −0.081 [−0.163, +0.025], fs −0.105 [−0.194, +0.004]) → "판단 불가"
+  - 심장비대: NLL 유의하게 증가 (c1 +0.0219, fs +0.0261), |slope−1| n.s. → "악화"
+- 보정 − raw: 흉막·effusion 차이 거의 없음 → 흉막에서의 이득은 내부 temperature가 만든 확신 부족(TS slope 1.17~1.39 vs raw 1.01~1.18)을
+  되돌린 정도이며, raw보다 낫지 않음
+- 심장비대: 보정 후 intercept가 커짐 (c1 +0.92 → +1.36). VinDr가 심장비대를 모델 예측보다 자주 양성으로 판정하는데
+  과반수 변환은 확률을 더 낮추므로 악화 → 판독의 수 차이가 아니라 병원별 판독 기준 차이가 주원인으로 보임
+- 독립 가정(ρ=0): effusion은 크게 개선(slope 1.0~1.1), 흉막은 과보정(0.70~0.84), 심장비대는 크게 악화 → finding마다 방향이 달라 일반 해법이 아님
+- 참고: 3,000장 중 2,997장 평가. 3장은 DICOM 픽셀 데이터가 잘린 파일(다운로드 중 손상)이라 변환 단계에서 자동 제외
+  (1d36704f…, 7959604f…, 4522ac24…). label과 무관한 기술적 손상이고 0.1%라 다시 받지 않고 제외한 채 보고
+  (확인 데이터를 다시 평가하지 않기 위함)
+- 보조 확인 (CheXpert validation 202장, k=3): 같은 방향. 흉막 보정 − TS: NLL n.s. (c1 +0.006, fs +0.000), |slope−1| fs −0.222 ✓, c1 n.s. → 판단 불가.
+  심장비대 NLL 악화 ✓ (c1 +0.036, fs +0.037). 폐부종: slope는 1에 가까워짐(fs 1.67 → 1.07) but intercept 악화(+0.92 → +1.93)로 NLL 악화 ✓.
+  CheXpert validation은 Pleural Other 양성이 없어 흉막 = effusion
+- 해석: 보정은 확률의 퍼짐(slope)은 1 쪽으로 옮기지만, 외부 병원이 모델 예측보다 양성을 더 많이 판정하는 기저율 차이(intercept)를 키움.
+  외부 오보정 = (1) 판독 방식에 따른 퍼짐 차이 (label 없이 일부 교정 가능) + (2) 병원별 기저율·판독 기준 차이 (label 필요)
+- 결론: label 없는 판독 방식 보정은 외부 보정을 일관되게 개선하지 못함. 외부 오보정은 판독의 수뿐 아니라 병원별 판독 기준 차이에서 옴
+
+## 12. 판별력 외부 검증 확장 (2026-11-22, 이 평가 실행 전에 고정. scripts/evaluate_discrimination.py)
+
+목적: 9절(VinDr test 한 곳)의 핵심 비교를 외부 데이터 여러 곳에서 확인하고 합친다. 이미 학습된 모델만 사용 (재학습·조정 없음)
+- 조건: fs, c1_none, fs_shuffled, real_global, hyb_none, ellipse (8·9절과 같은 run, seed 0~9)
+- 비교: fs − c1_none, fs − fs_shuffled (주) / fs − real_global, fs − hyb_none (보조) / fs − ellipse (비열등, AUROC 마진 0.02)
+- 지표: AUROC (주, temperature 무관), 10절 자동 문턱 missed (보조, W500, 하위 25%, 내부 val 시작, 순서 20번)
+- 데이터: CheXpert test, VinDr train, 새 VinDr train(2,997장), CheXpert validation, VinDr test.
+  finding: 흉막, 심장비대, effusion(흉막 출력), 폐부종(CheXpert만)
+  - 이미 본 정도: VinDr test는 9절에서 이 비교를 이미 봄. 나머지는 smoothing gaze·A 조건만 봤고 fs_shuffled·real_global·hyb_none·ellipse는 처음
+- 신뢰구간: 환자(CheXpert)/영상(VinDr) + seed bootstrap 2000회 (ci2), 앙상블은 영상만
+- 통합: 데이터별 seed 평균 차이와 ci2 폭으로 구한 표준오차로 random-effects(DerSimonian-Laird) 통합, I² 함께 보고.
+  VinDr 3개는 같은 병원이므로 "독립 병원 2곳(VinDr, CheXpert)"임을 명시하고, 병원별(VinDr 3개 통합 / CheXpert 2개 통합) 결과도 함께 제시
+- 해석: 주 비교 2개가 통합 추정에서 유의하고 데이터별 방향이 일관되면 "외부에서 일관된 시선 효과". 비열등은 통합 하한 > −0.02
+
+## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
+1. 12절 판별력 외부 검증 확장 + 통합
+2. 13절 CheXlocalize 전문의 분할로 위치 평가 (계획은 실행 전에 별도 고정)
+3. (여유 시) 소수 label 재보정 곡선
+4. 14절 B: 두 번째 backbone(예: ConvNeXt)으로 c1_none, fs, fs_shuffled 반복. 설정은 내부 val로만, 세 조건에 같은 탐색 범위.
+   외부 데이터는 B 설계에 쓰지 않았으므로 B의 확인 데이터로 사용 가능. 계획은 실행 전에 별도 고정
+

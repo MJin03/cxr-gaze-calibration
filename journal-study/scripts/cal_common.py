@@ -38,7 +38,22 @@ CONDITIONS = {
     "a_gaze_shuffled": ("fs", f"{HYB}_lam0.3_diff-gaze-shuffled0.3"),
     "a_certainty":     ("fs", f"{HYB}_lam0.3_diff-certainty1"),
     "a_free":          ("fs", f"{HYB}_lam0.3_diff-free0"),
+    # 12절 외부 검증 확장용 (8·9절 조건, 이미 학습됨)
+    "fs_shuffled": ("fs-shuffled", f"{HYB}_lam0.3"),
+    "real_global": ("real", f"{HYB}_lam1"),
+    "hyb_none":    ("none", f"{HYB}_lam0"),
+    "ellipse":     ("ellipse", f"{HYB}_lam0.1"),
 }
+# 12절: 판별력 외부 검증 확장 (9절과 같은 조건·비교, 결과 보기 전에 고정)
+DISC_CONDS = ["fs", "c1_none", "fs_shuffled", "real_global", "hyb_none", "ellipse"]
+DISC_COMPARISONS = [
+    ("fs", "c1_none", "primary"),
+    ("fs", "fs_shuffled", "primary"),
+    ("fs", "real_global", "secondary"),
+    ("fs", "hyb_none", "secondary"),
+    ("fs", "ellipse", "noninferiority"),
+]
+NI_MARGIN = 0.02
 COMPARISONS = [
     ("gaze", "uniform", "primary(11)"),
     ("gaze", "gaze_shuffled", "primary(11)"),
