@@ -17,8 +17,8 @@
           → 512×512 직접 축소(BILINEAR) → 내부 train과 히스토그램 L1 거리 최소인 방식 선택 (label·예측 사용 안 함)
           흑백 반전 여부는 finalize의 qc_examples.png를 보고 예측 전에 정함 (--invert)
 
-순서  zip 하나 받기 → 필요한 영상만 zip 안에서 바로 읽어 변환 → zip 삭제. 다음 zip은 변환하는 동안 미리 받음.
-      서버 디스크는 한 번에 zip 2개(약 45GB)까지만 씀. 끊겨도 다시 실행하면 끝난 zip은 건너뛰고 받던 zip은 이어 받음.
+순서  zip 하나 받기 → 필요한 영상만 zip 안에서 바로 읽어 변환 → zip 삭제.
+      zip --parallel개(기본 4)를 동시에 받음 → 서버 디스크는 한 번에 약 110GB까지만 씀. 끊겨도 다시 실행하면 끝난 zip은 건너뛰고 받던 zip은 이어 받음.
 
 링크  환경변수 PADCHEST_TOKEN (링크의 /s/ 뒤 부분). 화면·명령줄에 나오지 않도록 0600 임시 설정 파일로 wget에 전달.
 
@@ -263,7 +263,7 @@ def cmd_run(args):
             log(f"[주의] 원격 크기를 못 읽은 zip: {[i for i in zips if i not in sizes]} (크기 확인 없이 진행)")
         todo = [i for i in zips if not (OUT / "meta" / f"{i}.csv").exists()]
         st = {"zips": zips, "expected": {str(i): sizes.get(i) for i in zips}, "n_total": int(len(t)),
-              "done": [i for i in zips if i not in todo], "downloaded": [], "dl": None, "proc": None,
+              "done": [i for i in zips if i not in todo], "downloaded": [], "dl": [], "proc": None,
               "started": time.time(), "bytes_at_start": 0}
         st["bytes_at_start"] = sum(sizes.get(i, 0) for i in st["done"]) + sum(
             (ZIPDIR / f"{i}.zip.part").stat().st_size for i in todo if (ZIPDIR / f"{i}.zip.part").exists())
@@ -279,18 +279,19 @@ def cmd_run(args):
                 pending[i] = None
             else:
                 pending[i] = start_download(i)
-                st["dl"] = i; save_status(st)
+                st["dl"] = sorted(set(st["dl"]) | {i}); save_status(st)
                 log(f"zip {i} 다운로드 시작 ({(sizes.get(i) or 0) / 1e9:.1f} GB)")
 
-        launch(todo[0])
+        for i in todo[:args.parallel]:
+            launch(i)
         for k, i in enumerate(todo):
             zpath = ZIPDIR / f"{i}.zip"
             if pending[i] is not None:
                 zpath = finish_download(i, pending[i], sizes.get(i))
-            st["downloaded"].append(i); st["dl"] = None; save_status(st)
+            st["downloaded"].append(i); st["dl"] = [d for d in st["dl"] if d != i]; save_status(st)
             log(f"zip {i} 다운로드 완료")
-            if k + 1 < len(todo):
-                launch(todo[k + 1])
+            if k + args.parallel < len(todo):
+                launch(todo[k + args.parallel])
             st["proc"] = i; save_status(st)
             rows = t[t.ImageDir == i]
             log(f"zip {i} 변환 시작 ({len(rows)}장)")
@@ -323,11 +324,16 @@ def cmd_monitor(args):
         total = sum(exp.values())
         got = sum(exp[i] for i in set(st["done"]) | set(st["downloaded"]))
         cur = ""
-        if st.get("dl") is not None:
-            p = ZIPDIR / f"{st['dl']}.zip.part"
+        dls = st.get("dl") or []
+        dls = [dls] if isinstance(dls, int) else dls
+        parts = []
+        for d in dls:
+            p = ZIPDIR / f"{d}.zip.part"
             s = p.stat().st_size if p.exists() else 0
             got += s
-            cur = f"받는 중 zip {st['dl']} {s / 1e9:.1f}/{exp[st['dl']] / 1e9:.1f}GB"
+            parts.append(f"{d}:{s / 1e9:.1f}/{exp.get(d, 0) / 1e9:.1f}")
+        if parts:
+            cur = "받는 중 zip " + " ".join(parts) + "GB"
         if st.get("proc") is not None:
             cur += f"  변환 중 zip {st['proc']}"
         now = time.time()
@@ -443,6 +449,7 @@ def main():
     ap.add_argument("--zips", default="0-11,54")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--keep-zip", action="store_true")
+    ap.add_argument("--parallel", type=int, default=4, help="동시에 받는 zip 수 (디스크 최대 약 (parallel+1)×22GB)")
     ap.add_argument("--invert", choices=["none", "mono1", "all"], default="none")
     ap.add_argument("--allow-partial", action="store_true", help="동작 확인용")
     args = ap.parse_args()
