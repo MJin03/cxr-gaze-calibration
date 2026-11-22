@@ -447,6 +447,31 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
   H3 견고성: π × 0.75, 1.25에서도 prev_reader가 raw보다 NLL 낮은지
 - 한계: VinDr 3묶음은 label 방식이 다름(train 3명 투표 / test 5명 합의) → 기록과 대상의 정의 차이가 그대로 포함됨(현실적 오차로 봄)
 
+## 14. PadChest 세 번째 병원 확인 (2026-11-22, 영상 다운로드·예측 전에 고정. scripts/build_padchest_cache.py)
+
+- 데이터: PadChest (스페인 San Juan 병원, BIMCV). 메타데이터(label CSV)만 먼저 받아 아래 규칙을 정함. 영상·모델 예측은 아직 보지 않음
+- 대상: MethodLabel = Physician(의사가 판독문에서 직접 label), Projection ∈ {PA, AP, AP_horizontal}, 소아(PED) 제외
+- zip: 의사 label 정면 영상이 있는 0~12, 54번 중 **0~11, 54번** (13개, 약 282GB). 12번은 22.5GB에 306장뿐이라 제외 (label·결과와 무관한 효율 기준)
+- 제외: label 해석 불가·빈 label, "exclude" 포함, label이 "unchanged"뿐인 영상 (판독문이 소견을 나열하지 않아 음성이 불확실)
+- label 대응 (VinDr·CheXpert와 같은 정의를 따름)
+
+| 평가 label | PadChest label | 비고 |
+|---|---|---|
+| pleural_effusion | pleural effusion, loculated pleural effusion | 민감도 분석 (VinDr·CheXpert와 같음) |
+| pleural | pleural_effusion + pleural thickening, apical pleural thickening, calcified pleural thickening, pleural plaques, calcified pleural plaques, hydropneumothorax, empyema, pleural mass | 주 결과 (VinDr: effusion 또는 thickening, CheXpert: Effusion 또는 Pleural Other) |
+| cardiac | cardiomegaly | 주 결과 |
+| edema | pulmonary edema, kerley lines | 보조 결과 (양성 약 100장으로 적음) |
+| pleural_cpa | pleural + costophrenic angle blunting | 민감도 분석 |
+| edema_hi | edema + heart insufficiency | 민감도 분석 |
+
+- 민감도 분석: "suboptimal study" 영상 제외, "unchanged"가 있는 영상 전부 제외
+- reader 수: 판독문 1명 → **k = 1** (11-6 판독 방식 보정에서 단일 판독). 예상: 단일 판독 label이므로 확신 부족(slope > 1)이 VinDr·CheXpert보다 작아야 함 (11-4 진단의 검증)
+- 묶음: batch a = zip 0~5, batch b = zip 6~11, 54 → 13절의 같은 병원 다른 묶음 평가(a→b, b→a)에 사용
+- 환자 단위 bootstrap (group = PatientID)
+- 영상: 16-bit PNG → plain(최솟값~최댓값) / win(CSV의 WindowCenter·Width) / eq(plain에 histogram equalization) → 512×512 직접 축소 → 내부 train과 히스토그램 L1 거리 최소인 방식 선택 (무작위 3,000장, label·예측 사용 안 함)
+- 흑백 반전: finalize의 qc_examples.png(MONOCHROME1·2 각 12장)를 사람이 보고 예측 전에 결정 (none / mono1 / all)
+- 평가: 12절 판별력(같은 비교·지표, PadChest a·b를 외부 데이터로 추가해 random-effects 통합), 11-6 판독 방식 보정, 13절 베이지안 재보정. 결과를 본 뒤 규칙은 바꾸지 않음
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)

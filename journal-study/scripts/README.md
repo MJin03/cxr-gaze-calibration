@@ -39,5 +39,6 @@
 | [download_egd_cxr.sh](download_egd_cxr.sh) | EGD-CXR 시선·라벨 다운로드 (음성 제외) |
 | [make_reflacx_image_list.py](make_reflacx_image_list.py) | REFLACX 영상의 MIMIC-CXR-JPG 경로 목록 생성 (EGD-CXR와 겹치는 영상 제외) |
 | [verify_previous_results.py](verify_previous_results.py) | 이전 연구 보고 수치를 보관된 원본 예측값으로 재계산·대조 |
+| [build_padchest_cache.py](build_padchest_cache.py) | 14절: PadChest 의사 label 정면 영상 선택(plan) → zip별 다운로드·512 변환·zip 삭제(run, monitor) → labels.csv·전처리 선택·QC(finalize) |
 
 분석 계획: [../ANALYSIS_PLAN.md](../ANALYSIS_PLAN.md) (test 평가 전 고정)
