@@ -87,6 +87,14 @@ DATASETS = {
     "chexpert_valid": dict(img=PROC / "chexpert_valid", labels=PROC / "chexpert_valid/labels.csv",
                            findings={"pleural": "pleural", "cardiac": "cardiac", "edema": "edema",
                                      "pleural_effusion": "pleural"}),
+    # 14절 PadChest (세 번째 병원, 판독문 1명의 의사 label). batch a = zip 0~5, b = zip 6~11·54. 영상 폴더는 같음
+    # pleural_cpa·edema_hi는 사전 고정 민감도 분석 label
+    "padchest_a": dict(img=PROC / "padchest", labels=PROC / "padchest/labels_a.csv",
+                       findings={"pleural": "pleural", "cardiac": "cardiac", "edema": "edema",
+                                 "pleural_effusion": "pleural", "pleural_cpa": "pleural", "edema_hi": "edema"}),
+    "padchest_b": dict(img=PROC / "padchest", labels=PROC / "padchest/labels_b.csv",
+                       findings={"pleural": "pleural", "cardiac": "cardiac", "edema": "edema",
+                                 "pleural_effusion": "pleural", "pleural_cpa": "pleural", "edema_hi": "edema"}),
 }
 
 

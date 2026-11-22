@@ -12,6 +12,7 @@
 
 현실적 평가 (같은 병원의 다른 묶음을 "과거 기록"으로 사용, 평가 데이터 정답은 쓰지 않음)
     병원 VinDr: vindr_train, vindr_train_b, vindr_test / 병원 CheXpert: chexpert_valid, chexpert_test
+    병원 PadChest(14절): padchest_a, padchest_b (2쌍)
     같은 병원 안의 모든 (기록 묶음 → 대상 묶음) 쌍: VinDr 6쌍, CheXpert 2쌍
     π_기록 = 기록 묶음의 실제 양성 비율, label n장 = 기록 묶음에서 무작위 n장 (반복 100번)
 
@@ -25,7 +26,7 @@
 지표: 대상 묶음 전체에서 NLL, |slope − 1|, intercept, ECE (seed 평균, label n장은 반복 평균과 10~90% 범위)
 조건: fs, c1_none / finding: 흉막, 심장비대, effusion, 폐부종(CheXpert)
 
-사용법  python bayes_recalibration.py [--draws 100]
+사용법  python bayes_recalibration.py [--draws 100] [--hospitals PadChest]   (병원 일부만 → all_{병원}.csv)
 """
 import argparse
 import json
@@ -38,7 +39,8 @@ from cal_common import DATASETS, RESULTS, S10, run_dir
 from evaluate_calibration import citl, ece, logit, nll, sig, slope_fit
 from reader_recalibration import K_PROTOCOL, maj_prob
 
-HOSPITALS = {"VinDr": ["vindr_train", "vindr_train_b", "vindr_test"], "CheXpert": ["chexpert_valid", "chexpert_test"]}
+HOSPITALS = {"VinDr": ["vindr_train", "vindr_train_b", "vindr_test"], "CheXpert": ["chexpert_valid", "chexpert_test"],
+             "PadChest": ["padchest_a", "padchest_b"]}  # 14절
 CONDS = ["fs", "c1_none"]
 NS = [10, 25, 50, 100, 200]
 PRIOR = (0.0, 1.0, 1.0, 0.5)          # μa, μb, σa, σb
@@ -105,11 +107,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--draws", type=int, default=100)
     ap.add_argument("--seeds", type=int, nargs="*", default=S10)
+    ap.add_argument("--hospitals", nargs="*", default=list(HOSPITALS), choices=list(HOSPITALS))
     args = ap.parse_args()
+    hosps = {h: HOSPITALS[h] for h in args.hospitals}
+    fname = "all.csv" if len(hosps) == len(HOSPITALS) else f"all_{'_'.join(hosps)}.csv"
     OUT.mkdir(parents=True, exist_ok=True)
     rho_tab = pd.read_csv(RESULTS / "reader_recal/rho.csv").set_index(["cond", "seed", "finding"]).rho
     rows = []
-    for hosp, batches in HOSPITALS.items():
+    for hosp, batches in hosps.items():
         pairs = [(s, t) for s in batches for t in batches if s != t]
         for cond in CONDS:
             for seed in args.seeds:
@@ -174,13 +179,13 @@ def main():
                                 add(m, n, v, "labels")
                 print(f"  {hosp} {cond} seed {seed} 완료", flush=True)
     res = pd.DataFrame(rows)
-    res.to_csv(OUT / "all.csv", index=False)
+    res.to_csv(OUT / fname, index=False)
 
     # 요약: 쌍·조건·seed 평균
     pd.set_option("display.width", 220)
     order = ["raw", "ts", "reader", "prev_ts", "prev_reader"] + [f"prev_reader_x{m:g}" for m in PREV_MULT] + \
             ["ts_refit", "platt", "bayes_ts", "bayes_reader", "bayes_reader_prev", "oracle"]
-    for hosp in HOSPITALS:
+    for hosp in hosps:
         for f in res[res.hospital == hosp].finding.unique():
             g = res[(res.hospital == hosp) & (res.finding == f)]
             print(f"\n=== [{hosp} · {f}] 대상 묶음 평균 NLL (괄호 = |slope−1|), 쌍 {g[['src', 'tgt']].drop_duplicates().shape[0]}개 × 조건 {g.cond.nunique()} × seed 평균")
@@ -200,7 +205,7 @@ def main():
             best0 = piv[["raw", "ts", "reader"]].min(axis=1)
             better = int((piv["prev_reader"] < piv["raw"]).sum())
             print(f"  유병률(prev_reader)이 raw보다 NLL 낮은 쌍: {better}/{len(piv)}  |  정보 없음 3개 중 쌍별 최선 평균 {best0.mean():.4f}")
-    print(f"\n저장: {OUT / 'all.csv'}")
+    print(f"\n저장: {OUT / fname}")
 
 
 if __name__ == "__main__":

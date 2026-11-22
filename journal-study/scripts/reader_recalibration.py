@@ -28,7 +28,8 @@ import pandas as pd
 from cal_common import CONDITIONS, DATASETS, PROC, RESULTS, S10, run_dir
 from evaluate_calibration import AUC, citl, ece, logit, nll, sig, slope_fit
 
-K_PROTOCOL = {"vindr_train": 3, "vindr_train_b": 3, "chexpert_valid": 3, "chexpert_test": 5, "vindr_test": 5}
+K_PROTOCOL = {"vindr_train": 3, "vindr_train_b": 3, "chexpert_valid": 3, "chexpert_test": 5, "vindr_test": 5,
+              "padchest_a": 1, "padchest_b": 1}  # PadChest: 판독문 1명 (14절)
 RHO_GRID = np.r_[0.001, 0.005, np.arange(0.01, 0.991, 0.01)]
 INTERNAL_F = ["pleural", "cardiac", "edema"]
 OUT = RESULTS / "reader_recal"

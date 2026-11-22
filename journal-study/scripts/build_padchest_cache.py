@@ -374,7 +374,7 @@ def cmd_finalize(args):
     if len(metas) < len(zips) and not args.allow_partial:
         sys.exit(f"아직 끝나지 않은 zip 있음 ({len(metas)}/{len(zips)})")
     meta = pd.concat(metas)
-    meta["error"] = meta.error.fillna("")
+    meta["error"] = meta.error.astype(object).fillna("").astype(str)
     bad = meta[meta.error != ""]
     if len(bad):
         print(f"[주의] 변환 실패 {len(bad)}장 (제외). 예: {bad.error.iloc[0]}")
@@ -428,7 +428,7 @@ def cmd_finalize(args):
     for a, (ph, iid) in zip(ax.ravel(), picks):
         a.imshow(np.asarray(Image.open(OUT / f"images_512_{choice}" / f"{iid}.png")), cmap="gray", vmin=0, vmax=255)
         a.set_title(ph, fontsize=8)
-    fig.suptitle(f"PadChest QC ({choice}) — 뼈·심장이 밝고 폐가 어두우면 정상")
+    fig.suptitle(f"PadChest QC ({choice}): bones/heart bright, lungs dark = OK")
     fig.tight_layout()
     fig.savefig(OUT / "qc_examples.png", dpi=80)
 

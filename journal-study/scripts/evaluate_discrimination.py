@@ -11,7 +11,8 @@
 데이터 합치기: 데이터별 seed 평균 차이와 ci2 폭에서 구한 표준오차로 random-effects(DerSimonian-Laird) 통합 추정
     VinDr 데이터 3개는 같은 병원이라 독립 병원 수는 2곳(VinDr, CheXpert)임을 함께 보고
 
-사용법  python evaluate_discrimination.py [--datasets chexpert_test vindr_train vindr_train_b chexpert_valid vindr_test]
+사용법  python evaluate_discrimination.py [--datasets chexpert_test vindr_train vindr_train_b chexpert_valid vindr_test] [--tag 이름]
+        14절: --datasets (위 5개) padchest_a padchest_b --tag 7sites
 """
 import argparse
 import json
@@ -132,7 +133,11 @@ def main():
     ap.add_argument("--datasets", nargs="*", default=["chexpert_test", "vindr_train", "vindr_train_b", "chexpert_valid", "vindr_test"])
     ap.add_argument("--n-boot", type=int, default=2000)
     ap.add_argument("--allow-missing", action="store_true", help="동작 확인용")
+    ap.add_argument("--tag", default="", help="결과 폴더 eval_disc_{tag} (기존 12절 결과를 덮어쓰지 않도록)")
     args = ap.parse_args()
+    global OUT
+    if args.tag:
+        OUT = RESULTS / f"eval_disc_{args.tag}"
     OUT.mkdir(parents=True, exist_ok=True)
     pers, comps = [], []
     for d in args.datasets:
@@ -164,7 +169,8 @@ def main():
                 for r in g.itertuples():
                     row[r.dataset] = f"{r.seed_estimate:+.3f}[{r.seed_ci2_low:+.3f},{r.seed_ci2_high:+.3f}]{mark(r.seed_ci2_low, r.seed_ci2_high, kind, metric)}"
                 for name, gg in [("통합(전체)", g), ("통합(VinDr)", g[g.dataset.str.startswith("vindr")]),
-                                 ("통합(CheXpert)", g[g.dataset.str.startswith("chexpert")])]:
+                                 ("통합(CheXpert)", g[g.dataset.str.startswith("chexpert")]),
+                                 ("통합(PadChest)", g[g.dataset.str.startswith("padchest")])]:
                     if len(gg) >= 2:
                         se = ((gg.seed_ci2_high - gg.seed_ci2_low) / (2 * 1.96)).clip(lower=1e-6).values
                         mu, lo, hi, tau2, i2 = dersimonian_laird(gg.seed_estimate.values, se)
