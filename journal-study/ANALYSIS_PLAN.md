@@ -447,6 +447,31 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
   H3 견고성: π × 0.75, 1.25에서도 prev_reader가 raw보다 NLL 낮은지
 - 한계: VinDr 3묶음은 label 방식이 다름(train 3명 투표 / test 5명 합의) → 기록과 대상의 정의 차이가 그대로 포함됨(현실적 오차로 봄)
 
+### 13절 결과 (2026-11-24, VinDr 6쌍 + CheXpert 2쌍, 규칙대로 한 번 평가)
+
+NLL (쌍·조건·seed 평균). gap 회복 = (raw − prev_reader) / (raw − oracle)
+
+| 병원 · finding | raw | prev_reader | oracle | gap 회복 | H1 쌍 | H3 (×0.75 / ×1.25) |
+|---|---|---|---|---|---|---|
+| VinDr · pleural | 0.2036 | 0.1986 | 0.1955 | 62% | 6/6 ✓ | ✓ / ✓ |
+| VinDr · cardiac | 0.2946 | 0.2636 | 0.2522 | 73% | 6/6 ✓ | ✓ / ✓ |
+| VinDr · effusion | 0.1234 | 0.0884 | 0.0850 | 91% | 6/6 ✓ | ✓ / ✓ |
+| CheXpert · pleural | 0.3843 | 0.3996 | 0.3523 | −48% | 0/2 ✗ | ✗ / ✗ |
+| CheXpert · cardiac | 0.5285 | 0.4691 | 0.4540 | 80% | 2/2 ✓ | ✓ / ✓ |
+| CheXpert · edema | 0.3589 | 0.3447 | 0.3197 | 36% | 2/2 ✓ | ✓ / ✓ |
+| CheXpert · effusion | 0.3826 | 0.4011 | 0.3488 | −55% | 0/2 ✗ | ✗ / ✗ |
+
+- H1 (유병률 하나로 개선): 7개 중 5개 충족. CheXpert pleural·effusion은 악화 (기록 묶음 validation 3명 합의 → 대상 test 5명 과반수: 기록과 대상의 label 정의가 달라 π_기록이 맞지 않는 것으로 추정, 사전에 적은 한계)
+- H2 label 효율: n ≤ 50에서 bayes_reader < platt·ts_refit 21칸 중 19칸 충족 (예외: CheXpert pleural·effusion n=50에서 ts_refit이 약간 우세).
+  platt·ts_refit은 label 10~25장에서 raw보다 크게 나쁨 (NLL 최대 2~3배) → 적은 label로 다시 맞추면 오히려 해로움. 베이지안 틀은 이 손해를 막음
+- H2 사전 믿음: bayes_reader < bayes_ts는 VinDr effusion만 충족 → 판독 방식 보정이 TS보다 좋은 사전 믿음이라는 근거 없음
+- H3 견고성: H1을 충족한 5개 모두 π × 0.75·1.25에서도 raw보다 좋음. × 0.5·1.5에서는 일부 악화 → 유병률 오차 ±25% 안에서 견고
+- 유병률 + label (bayes_reader_prev): label을 더해도 prev_reader 대비 이득이 작음 (200장에서 oracle에 근접). 즉 이득의 대부분은 유병률에서 옴
+- 부가 관찰: prev_reader는 NLL·기저율을 고치지만 cardiac에서 |slope−1|이 커짐 (VinDr 0.21→0.50) → 퍼짐(slope)은 유병률로 고쳐지지 않음
+- 정리 (프로토콜): 정보 없음 → raw 유지 (TS·reader는 일관된 이득 없음) / 같은 label 방식의 유병률 있음 → prev_reader (gap의 62~91% 회복) /
+  label 있음 → bayes_reader_prev (platt·ts_refit은 100장 미만에서 쓰지 않음) / ⚠️ 기록과 대상의 label 정의가 다르면 유병률이 오히려 해로울 수 있음
+- PadChest(14절, a↔b 같은 label 방식)가 이 프로토콜의 최종 확인 (H1 충족 예상)
+
 ## 14. PadChest 세 번째 병원 확인 (2026-11-22, 영상 다운로드·예측 전에 고정. scripts/build_padchest_cache.py)
 
 - 데이터: PadChest (스페인 San Juan 병원, BIMCV). 메타데이터(label CSV)만 먼저 받아 아래 규칙을 정함. 영상·모델 예측은 아직 보지 않음
@@ -479,11 +504,54 @@ C. 병원별 label 없는 재보정 (보조, gaze와 무관한 운영 방법)
 - 전처리 선택: eq (내부 train과 히스토그램 L1 0.114; plain 0.458, win 1.817 — CSV window 값이 PNG 밝기와 맞지 않음)
 - 흑백 방향: 전부 MONOCHROME2. PadChest 평균 영상(무작위 500장)과 내부 train 평균 영상(500장)의 상관 0.93 → 반전 없음 (invert = none). label·예측 사용 안 함
 
+## 15. label 개념 통일 (2026-11-24, 14절 PadChest 평가 결과를 보기 전에 고정)
+
+동기: 외부 label 차이 = ① 범주 범위(어떤 소견을 포함하나) + ② 판독 방식(같은 이름을 얼마나 엄격하게 붙이나, 11-4).
+키워드 통일은 ①만 다룸 (②는 11-6 판독 방식 보정과 16절 순서형 출력이 담당).
+- 기준 정의: 내부 학습 label(REFLACX)의 개념 — Pleural abnormality / Enlarged cardiac silhouette / Pulmonary edema
+- 단순 키워드 일치는 쓰지 않음 (예: heart → artificial heart valve, effusion → pericardial effusion이 잘못 잡힘). 포함·제외 목록으로 고정
+
+| 통일 개념 | VinDr | CheXpert | PadChest | 제외 |
+|---|---|---|---|---|
+| 흉막 이상 | Pleural effusion, Pleural thickening | Pleural Effusion, Pleural Other | 14절 pleural + costophrenic angle blunting (= pleural_cpa) | pericardial effusion, fissure thickening, pneumothorax |
+| 심장 음영 확대 | Cardiomegaly | Cardiomegaly (Enlarged Cardiomediastinum은 종격동 포함이라 제외) | cardiomegaly (+ pericardial effusion 14장은 무시 가능한 수라 추가 안 함) | heart valve, dextrocardia, surgery heart |
+| 폐부종 | (해당 label 없음) | Edema | pulmonary edema, kerley lines | heart insufficiency (진단명) |
+
+- 확인 결과: 현재 사전 고정 대응표가 이미 통일 개념과 같음. 유일한 차이 = PadChest 흉막에 CPA blunting 포함 여부 → 14절 민감도 label pleural_cpa가 곧 통일 label
+- 따라서 통일 label 분석 = PadChest에서 pleural 대신 pleural_cpa로 같은 평가(판별력, 판독 방식 보정, 13절)를 한 결과. 범주 범위 차이의 영향 = 두 결과의 차이로 보고
+- 출력 이름 표시: 모델 출력(pleural, cardiac, edema)은 통일 개념, 결과 표시는 병원별 이름표로 바꿈 (위 표의 병원 열). 성능과 무관한 표시 기능
+
+## 16. 순서형(ordinal) 확신도 출력 (2026-11-24, 학습 전·14절 PadChest 평가 결과를 보기 전에 고정. scripts/sweep_ord.py)
+
+동기: 외부 오보정의 주원인은 판독 방식 차이(②, 11-4). 학습 label은 "판독의 1명이 확신도 ≥3"인데 병원마다 양성 기준이 다름.
+모델이 확신도 문턱별 확률을 직접 내면, 병원 정보 수준에 맞는 문턱을 정답 없이 고를 수 있음.
+- 문턱: ≥3(기존 출력), ≥4, ≥5. ≥1·≥2는 train에서 ≥3과 차이가 9장 이하라 제외
+  (train 판독 양성 ≥3/≥4/≥5: 흉막 523/452/345, 심장비대 387/358/301, 폐부종 250/218/115)
+- 구조: logit_≥4 = logit_≥3 − softplus(g4(x)), logit_≥5 = logit_≥4 − softplus(g5(x)). g = finding별 특징의 선형 헤드
+  → 문턱이 높을수록 확률이 항상 낮음(단조), 간격이 영상마다 달라 퍼짐(slope)도 달라질 수 있음. ≥3 출력은 기존 구조 그대로
+- label: ≥4·≥5는 REFLACX 판독 확신도(판독 여러 명이면 과반수). EGD 음성은 모든 문턱 음성, EGD 양성은 확신도를 몰라 ≥4·≥5 loss에서 제외
+- loss = 기존 loss + 1 × (≥4·≥5 BCE). 가중치 1은 사전 고정, 조정 없음. checkpoint 선택·나머지 설정은 기존과 동일(val ≥3 loss)
+- temperature: 출력마다 내부 val에서 따로
+- 조건: ord_fs (hybrid3, fs 시선 λ0.3) / ord_c1 (avg, 시선 없음). seed 0~9
+- 문턱 선택 규칙 (외부 정답 사용 안 함)
+  - 정보 없음: 판독 방식 k에 대한 문턱 t*(k) = 내부 5명 판독 109장에서 "k명 과반수 label"에 대해 TS 확률의 NLL이 가장 낮은 문턱
+    (k = 5: 실제 5명 과반수, k = 3: 5명 중 3명 조합 10개의 과반수 평균, k = 1: 판독 1명씩). 조건·finding별, seed 평균 NLL 기준.
+    k는 14절·11-6절과 같은 K_PROTOCOL (VinDr train·새 train·CheXpert val = 3, VinDr test·CheXpert test = 5, PadChest = 1)
+  - 유병률 있음: 13절과 같은 같은 병원 쌍에서, 대상 영상 평균 예측 확률이 π_기록에 가장 가까운 문턱 (ord_select_prev),
+    + 그 문턱 출력에 13절 prev 보정을 더한 것 (ord_select_prev_ts)
+- 판정 (외부 7곳, seed 평균, 쌍·데이터별)
+  H5 정보 없음: ord_fs[t*(k)]의 NLL이 ord_fs[≥3]와 기존 fs raw보다 낮은 데이터가 과반수 → "판독 방식에 맞춘 문턱이 정보 없는 병원 보정을 개선".
+     |slope−1|, intercept도 함께 보고
+  H6 유병률: ord_select_prev(_ts)의 NLL이 13절 prev_reader보다 낮은 쌍이 과반수 → "문턱 선택이 직선 보정보다 나음"
+  H7 판별력 유지: ord_fs ≥3 AUROC − fs AUROC의 random-effects 통합 차이 CI 하한 > −0.02 (비열등). ord_fs − ord_c1은 보조 (시선 효과 유지)
+- 해석: H5·H6 실패여도 "판독 방식 차이는 확신도 문턱으로 설명되지 않음(합의 과정 자체의 효과)"이라는 결과로 보고
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)
 3. 순서형 출력(판독 확신도 기준별 확률) 학습 → 정보 없는 병원 개선 시도 (권장 순서 2, 재학습)
-4. PadChest(세 번째 병원)로 프로토콜·B 최종 확인 (권장 순서 3)
+4. PadChest(세 번째 병원)로 프로토콜·B 최종 확인 (권장 순서 3) — 14절, 평가 중
+   - 15절 label 개념 통일 (pleural_cpa로 확인), 16절 순서형 출력 학습 (2026-11-24 고정)
 5. CheXlocalize 전문의 분할로 위치 평가
 6. B: 두 번째 backbone(예: ConvNeXt)으로 c1_none, fs, fs_shuffled 반복. 설정은 내부 val로만, 세 조건에 같은 탐색 범위.
    외부 데이터는 B 설계에 쓰지 않았으므로 B의 확인 데이터로 사용 가능. 계획은 실행 전에 별도 고정

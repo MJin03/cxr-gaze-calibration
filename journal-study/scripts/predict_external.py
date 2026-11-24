@@ -17,7 +17,7 @@ import pandas as pd
 import torch
 from PIL import Image
 
-from cal_common import CONDITIONS, DATASETS, FINDINGS_MODEL, INTERNAL_VAL, PROC, S10, UNCERTAINTY_CONDS, run_dir
+from cal_common import CONDITIONS, DATASETS, FINDINGS_MODEL, INTERNAL_VAL, ORD_CONDITIONS, PROC, S10, UNCERTAINTY_CONDS, run_dir
 from train import Net
 
 
@@ -27,6 +27,7 @@ def main():
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--allow-missing", action="store_true", help="동작 확인용")
+    ap.add_argument("--conds", nargs="*", help="예측할 조건 (기본: CONDITIONS 전부). 16절: --conds ord_fs ord_c1")
     args = ap.parse_args()
     if args.dataset == INTERNAL_VAL:
         split = pd.read_csv(PROC / "split_seed42.csv")
@@ -38,6 +39,11 @@ def main():
         img_dir = ds["img"] / f"images_512_{choice}"
         ids = pd.read_csv(ds["labels"]).image_id.tolist()
         conds = list(CONDITIONS)
+    if args.conds:
+        bad = [c for c in args.conds if c not in CONDITIONS and c not in ORD_CONDITIONS]
+        if bad:
+            raise SystemExit(f"모르는 조건: {bad}")
+        conds = args.conds
     print(f"{args.dataset}: {len(ids)}장, 전처리 {choice}")
 
     jobs = [(c, s) for c in conds for s in S10]
@@ -68,25 +74,35 @@ def main():
             cache[size] = torch.from_numpy(np.stack([np.asarray(
                 Image.open(img_dir / f"{i}.png").convert("L").resize((size, size), Image.BILINEAR)
                 if size != 512 else Image.open(img_dir / f"{i}.png").convert("L")) for i in ids]))
+        ordinal = str(cfg.get("ordinal", "False")) == "True"
         model = Net(len(FINDINGS_MODEL), cfg.get("backbone", "imagenet"), False, cfg.get("pool", "avg"),
-                    diff=cfg.get("diff_target", "none") != "none").to(device)
+                    diff=cfg.get("diff_target", "none") != "none", ordinal=ordinal).to(device)
         res = model.load_state_dict(torch.load(d / "best.pt", map_location=device)["model"], strict=False)
         if res.unexpected_keys or set(res.missing_keys) - {"mean", "std"}:
             raise SystemExit(f"{d.name}: 가중치 키가 맞지 않습니다 {res.missing_keys} {res.unexpected_keys}")
         model.eval()
-        lg, atts = [], []
+        lg, atts, ords = [], [], []
         with torch.no_grad():
             for b in range(0, len(ids), args.batch_size):
                 x = (cache[size][b:b + args.batch_size].float() / 255.0)[:, None].to(device)
                 with torch.autocast(device.type, enabled=amp):
                     o, a = model(x)
                 lg.append(o.float().cpu())
+                if ordinal:
+                    ords.append(model.last_ord.float().cpu())
                 if model.multi:
                     atts.append(a.float().cpu())
         lg = torch.cat(lg).numpy()
         if atts:
             np.save(d / f"att_{args.dataset}.npy", torch.cat(atts).numpy().astype(np.float16))
-        pd.DataFrame({"image_id": ids, **{f"logit_{f}": lg[:, j] for j, f in enumerate(FINDINGS_MODEL)}}).to_csv(out, index=False)
+        cols = {f"logit_{f}": lg[:, j] for j, f in enumerate(FINDINGS_MODEL)}
+        if ordinal:  # [t4 finding들, t5 finding들] → logit_{f}_t4, logit_{f}_t5
+            od = torch.cat(ords).numpy()
+            K = len(FINDINGS_MODEL)
+            for ti, t in enumerate([4, 5]):
+                for j, f in enumerate(FINDINGS_MODEL):
+                    cols[f"logit_{f}_t{t}"] = od[:, ti * K + j]
+        pd.DataFrame({"image_id": ids, **cols}).to_csv(out, index=False)
         print(f"[{k}/{len(jobs)}] {c} seed {s} 완료 ({time.time() - t0:.0f}s)", flush=True)
     print("예측 완료")
 

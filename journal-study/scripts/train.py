@@ -43,6 +43,14 @@ C3 옵션 (2026-11-18 추가, ANALYSIS_PLAN.md 8절 C3)
     --diff-target free           같은 구조, 난이도 지도 학습 없음 (구조 효과만)
     --diff-weight μ              난이도 예측 loss(BCE) 가중치
 
+16절 옵션 (2026-11-24 추가): 순서형(ordinal) 확신도 출력
+    --ordinal    finding마다 확신도 문턱 ≥3(기존 출력), ≥4, ≥5 확률을 함께 학습
+                 logit_t4 = logit_t3 − softplus(g4), logit_t5 = logit_t4 − softplus(g5) (g = 영상별 간격, 단조 보장)
+                 ≥4·≥5 label: REFLACX 판독 확신도 (cohort_readings.csv, 판독 여러 명이면 과반수).
+                 EGD 영상은 확신도가 없어 음성(0)만 사용, 양성은 ≥4·≥5에서 제외(mask)
+                 checkpoint 선택은 기존과 같은 val ≥3 loss. temperature는 출력마다 val에서
+    --ordinal-weight w   ≥4·≥5 BCE 가중치 (기본 1, 사전 고정)
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -116,7 +124,31 @@ def build_table(args) -> tuple:
     if args.task == "findings":
         add_smoothing(df, args)
         add_difficulty_target(df, args)
+        add_ordinal_targets(df, args)
     return df, targets
+
+
+ORD_T = [4, 5]
+
+
+def ord_cols():
+    return [f"o{t}_{f}" for t in ORD_T for f in FINDINGS]  # 순서: t4 (pleural, cardiac, edema), t5 (...)
+
+
+def add_ordinal_targets(df: pd.DataFrame, args) -> None:
+    """≥4·≥5 영상 label o{t}_{finding} (확신도 모르는 EGD 양성은 NaN = loss 제외)."""
+    if not getattr(args, "ordinal", False):
+        return
+    reads = pd.read_csv(PROC / "cohort_readings.csv")
+    ref = reads[reads.dataset == "reflacx"]
+    for t in ORD_T:
+        for f in FINDINGS:
+            g = (ref[f"{f}_raw"] >= t).groupby(ref.dicom_id).agg(["sum", "size"])
+            lab_ref = (g["sum"] > g["size"] / 2).astype(float)
+            v = df.dicom_id.map(lab_ref)
+            egd_only = v.isna()
+            v[egd_only & (df[f"{f}_t3"] == 0)] = 0.0  # EGD 음성 → 모든 문턱에서 음성
+            df[f"o{t}_{f}"] = v.values  # EGD 양성은 NaN
 
 
 def add_difficulty_target(df: pd.DataFrame, args) -> None:
@@ -177,8 +209,9 @@ class CXRDataset(Dataset):
     """n_maps = 1 (기존 avg/attn: 512 지도 1장) 또는 3 (attn3/hybrid3: finding별 128 지도 3장)."""
     MULTI_RES = 128
 
-    def __init__(self, df, targets, task, img_dir, hm_dir, train, img_size, n_maps=1, repeat_global=False):
+    def __init__(self, df, targets, task, img_dir, hm_dir, train, img_size, n_maps=1, repeat_global=False, ordinal=False):
         self.df, self.targets, self.task = df.reset_index(drop=True), targets, task
+        self.ord = ord_cols() if ordinal else []
         self.img_dir, self.hm_dir, self.train, self.size = img_dir, hm_dir, train, img_size
         self.n_maps, self.repeat_global = n_maps, repeat_global
         self.res = img_size if n_maps == 1 else self.MULTI_RES
@@ -225,6 +258,8 @@ class CXRDataset(Dataset):
             if self.train:  # 난이도 가중 label smoothing (eps가 0이면 원래 label 그대로)
                 eps = torch.tensor([float(r[f"eps_{f}"]) for f in FINDINGS])
                 y = y * (1 - eps) + eps / 2
+            if self.ord:  # 순서형: 뒤에 ≥4·≥5 label (NaN = 제외)
+                y = torch.cat([y, torch.tensor([float(r[c]) for c in self.ord])])
         else:
             y = torch.tensor(int(r[self.targets[0]]))
         return img, y, hm, torch.as_tensor(has_gaze), i
@@ -238,7 +273,7 @@ def seed_worker(_):
 
 # ---------------------------------------------------------------- 모델
 class Net(nn.Module):
-    def __init__(self, n_out: int, backbone: str, pretrained: bool, pool: str, diff: bool = False):
+    def __init__(self, n_out: int, backbone: str, pretrained: bool, pool: str, diff: bool = False, ordinal: bool = False):
         super().__init__()
         self.backbone, self.pool = backbone, pool
         if backbone == "chexpert":
@@ -260,6 +295,12 @@ class Net(nn.Module):
             self.diff_b = nn.Parameter(torch.zeros(n_out))
             self.beta = nn.Parameter(torch.full((n_out,), -1.0))
         self.last_dlogit = None
+        self.ordinal = ordinal
+        if ordinal:  # finding별 ≥4, ≥5 간격 헤드 (hybrid3 = finding별 특징 2048, 그 외 = 공통 특징 1024)
+            d = 2048 if pool == "hybrid3" else 1024 if pool in ("attn3", "avg", "attn") else 1024
+            self.ord_w = nn.Parameter(torch.zeros(n_out, len(ORD_T), d))
+            self.ord_b = nn.Parameter(torch.zeros(n_out, len(ORD_T)))
+        self.last_ord = None
         self.gaze_head = nn.Conv2d(1024, n_out if self.multi else 1, kernel_size=1)
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
@@ -278,6 +319,8 @@ class Net(nn.Module):
                 g = F.adaptive_avg_pool2d(f, 1).flatten(1)                 # B×1024
                 per = torch.cat([g[:, None].expand(-1, per.shape[1], -1), per], dim=-1)
             logits = (per * self.head_w.to(per.dtype)).sum(-1) + self.head_b.to(per.dtype)
+            if self.ordinal:
+                self.last_ord = self.ord_logits(logits.float(), torch.einsum("bkd,ktd->bkt", per.float(), self.ord_w))
             if self.diff:
                 dlogit = (per.float() * self.diff_w).sum(-1) + self.diff_b       # B×K
                 scale = 1 + F.softplus(self.beta) * torch.sigmoid(dlogit)
@@ -289,7 +332,16 @@ class Net(nn.Module):
             pooled = (f.flatten(2) * w).sum(-1)                   # B×1024
         else:
             pooled = F.adaptive_avg_pool2d(f, 1).flatten(1)
-        return self.head(pooled), att
+        logits = self.head(pooled)
+        if self.ordinal:
+            self.last_ord = self.ord_logits(logits.float(), torch.einsum("bd,ktd->bkt", pooled.float(), self.ord_w))
+        return logits, att
+
+    def ord_logits(self, l3, g):
+        """l3: B×K (≥3 logit), g: B×K×T 간격 점수 → B×(T·K) [t4 finding들, t5 finding들], 단조 감소 보장."""
+        gaps = F.softplus(g + self.ord_b)
+        out = l3[..., None] - torch.cumsum(gaps, dim=-1)   # B×K×T
+        return out.transpose(1, 2).flatten(1)
 
 
 def cls_loss(logits, y, task):
@@ -321,6 +373,8 @@ def predict(model, loader, device, amp):
     for img, _, _, _, i in loader:
         with torch.autocast(device.type, enabled=amp):
             logits, _ = model(img.to(device, non_blocking=True))
+        if getattr(model, "ordinal", False):
+            logits = torch.cat([logits.float(), model.last_ord.float()], 1)
         out.append(logits.float().cpu())
         idx.append(i)
     return torch.cat(out), torch.cat(idx)
@@ -340,7 +394,11 @@ def fit_temperature(logits: torch.Tensor, y: torch.Tensor, task: str) -> list:
         opt.step(closure)
         return float(log_t.detach().exp())
     if task == "findings":
-        return [fit(logits[:, k], y[:, k], F.binary_cross_entropy_with_logits) for k in range(y.shape[1])]
+        res = []
+        for k in range(y.shape[1]):
+            ok = ~torch.isnan(y[:, k])
+            res.append(fit(logits[ok, k], y[ok, k], F.binary_cross_entropy_with_logits))
+        return res
     return [fit(logits, y, F.cross_entropy)]
 
 
@@ -398,6 +456,8 @@ def main() -> None:
     ap.add_argument("--smooth-max", type=float, default=0.0)
     ap.add_argument("--diff-target", choices=["none", "gaze", "gaze-shuffled", "certainty", "free"], default="none")
     ap.add_argument("--diff-weight", type=float, default=0.0)
+    ap.add_argument("--ordinal", action="store_true", help="16절: 확신도 ≥3·≥4·≥5 순서형 출력")
+    ap.add_argument("--ordinal-weight", type=float, default=1.0)
     ap.add_argument("--tag", default="")
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용: 세트마다 앞에서 N장만")
     ap.add_argument("--run-name", default="")
@@ -411,6 +471,8 @@ def main() -> None:
         raise SystemExit(f"--gaze {args.gaze}는 finding별 attention이 필요합니다: --pool attn3 또는 hybrid3")
     if multi and args.task != "findings":
         raise SystemExit("attn3/hybrid3는 --task findings 에서만 씁니다.")
+    if args.ordinal and (args.task != "findings" or args.diff_target != "none" or args.pool not in ("avg", "hybrid3")):
+        raise SystemExit("--ordinal은 findings, pool avg/hybrid3, diff-target none에서만 씁니다.")
 
     name = args.run_name or (f"{args.task}_gaze-{args.gaze}_t{args.threshold}_seed{args.seed}"
                              + (f"_{args.tag}" if args.tag else ""))
@@ -445,7 +507,7 @@ def main() -> None:
 
     g = torch.Generator().manual_seed(args.seed)
     mk = lambda d, tr: DataLoader(CXRDataset(d, targets, args.task, img_dir, hm_dir, tr, args.img_size,
-                                             n_maps, repeat_global),
+                                             n_maps, repeat_global, args.ordinal),
                                   batch_size=args.batch_size if tr else args.batch_size * 2, shuffle=tr,
                                   num_workers=args.workers, pin_memory=amp, drop_last=tr and len(d) > args.batch_size,
                                   worker_init_fn=seed_worker, generator=g if tr else None,
@@ -455,7 +517,12 @@ def main() -> None:
     use_diff = args.diff_target != "none"
     if use_diff and args.pool != "hybrid3":
         raise SystemExit("--diff-target는 --pool hybrid3에서만 씁니다.")
-    model = Net(len(names), args.backbone, not args.no_pretrained, args.pool, diff=use_diff).to(device)
+    model = Net(len(names), args.backbone, not args.no_pretrained, args.pool, diff=use_diff, ordinal=args.ordinal).to(device)
+    K = len(names)
+    if args.ordinal:
+        oc = parts["train"][ord_cols()]
+        print("  순서형 ≥4·≥5 label (train 양성/사용): " + ", ".join(
+            f"{c} {int(np.nansum(oc[c]))}/{int(oc[c].notna().sum())}" for c in ord_cols()))
     if args.task == "findings":  # 난이도 정답 (train 영상 순서와 같은 인덱스)
         idx_train = np.arange(len(parts["train"]))
         dt_all = parts["train"][[f"dt_{f}" for f in FINDINGS]].values.astype(np.float32)
@@ -485,14 +552,18 @@ def main() -> None:
     if args.task == "class3":
         y_val = y_val.squeeze(1)
 
+    y_val_ord = torch.tensor(parts["val"][ord_cols()].values, dtype=torch.float32) if args.ordinal else None
     best, bad, hist = math.inf, 0, []
     for ep in range(1, args.epochs + 1):
         t0 = time.time()
         model.train()
-        sums = np.zeros(4)
+        sums = np.zeros(5)
         n = 0
         for img, y, hm, hg, i_batch in tr_loader:
             img, y, hm, hg = img.to(device, non_blocking=True), y.to(device), hm.to(device), hg.to(device)
+            y_ord = None
+            if args.ordinal:
+                y, y_ord = y[:, :K], y[:, K:]
             with torch.autocast(device.type, enabled=amp):
                 logits, att = model(img)
                 lc = cls_loss(logits.float(), y, args.task)
@@ -506,18 +577,25 @@ def main() -> None:
                 if dm.any():
                     ld = F.binary_cross_entropy_with_logits(model.last_dlogit[dm].float(), dt[dm])
                     loss = loss + args.diff_weight * ld
+            lo = torch.zeros((), device=device)
+            if args.ordinal:
+                ok = ~torch.isnan(y_ord)
+                if ok.any():
+                    lo = F.binary_cross_entropy_with_logits(model.last_ord.float()[ok], y_ord[ok])
+                    loss = loss + args.ordinal_weight * lo
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
             sched.step()
-            sums += [loss.item(), lc.item(), lg.item(), ld.item()]
+            sums += [loss.item(), lc.item(), lg.item(), ld.item(), lo.item()]
             n += 1
         v_logits, _ = predict(model, va_loader, device, amp)
+        v_logits = v_logits[:, :K] if args.ordinal else v_logits
         v_loss = float(cls_loss(v_logits, y_val, args.task))
         v_met = summarize(v_logits, y_val, args.task, [1.0] * len(names), names)
         row = {"epoch": ep, "train_loss": sums[0] / n, "train_cls": sums[1] / n, "train_gaze_kl": sums[2] / n,
-               "train_diff": sums[3] / n,
+               "train_diff": sums[3] / n, "train_ord": sums[4] / n,
                "val_cls_loss": v_loss, **{k: v for k, v in v_met.items() if "auroc" in k or k == "accuracy"},
                "sec": round(time.time() - t0, 1)}
         hist.append(row)
@@ -543,12 +621,23 @@ def main() -> None:
         d = parts[split].iloc[idx.numpy()][["dicom_id", "subject_id", "ViewPosition"] + targets].reset_index(drop=True)
         for k, nme in enumerate(names):
             d[f"logit_{nme}"] = logits[:, k].numpy()
+        if args.ordinal:
+            for j, c in enumerate(ord_cols()):  # o4_pleural → logit_pleural_t4
+                t, f = c[1], c.split("_", 1)[1]
+                d[f"logit_{f}_t{t}"] = logits[:, K + j].numpy()
         d.to_csv(out / f"preds_{split}.csv", index=False)
         if split == "val":
-            v_logits = logits[torch.argsort(idx)]
+            v_full = logits[torch.argsort(idx)]
+            v_logits = v_full[:, :K]
 
     temps = fit_temperature(v_logits, y_val, args.task)
-    json.dump(dict(zip(names if args.task == "findings" else ["all"], temps)), open(out / "temperature.json", "w"), indent=2)
+    tdict = dict(zip(names if args.task == "findings" else ["all"], temps))
+    if args.ordinal:
+        t_ord = fit_temperature(v_full[:, K:], y_val_ord, args.task)
+        for c, tv in zip(ord_cols(), t_ord):
+            tdict[f"{c.split('_', 1)[1]}_t{c[1]}"] = tv
+        print("  순서형 temperature:", {k: round(v, 3) for k, v in tdict.items() if "_t" in k})
+    json.dump(tdict, open(out / "temperature.json", "w"), indent=2)
     v_met = summarize(v_logits, y_val, args.task, temps, names)
     v_met["best_epoch"] = ck["epoch"]
     json.dump(v_met, open(out / "val_metrics.json", "w"), indent=2)

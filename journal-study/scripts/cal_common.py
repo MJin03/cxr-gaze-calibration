@@ -44,6 +44,12 @@ CONDITIONS = {
     "hyb_none":    ("none", f"{HYB}_lam0"),
     "ellipse":     ("ellipse", f"{HYB}_lam0.1"),
 }
+# 16절: 순서형 확신도 출력 (≥3 기존 출력 + ≥4·≥5). CONDITIONS와 분리 (기존 평가 스크립트에 영향 없음)
+ORD_CONDITIONS = {
+    "ord_fs": ("fs", f"{HYB}_lam0.3_ord"),
+    "ord_c1": ("none", f"{AVG}_lam0_ord"),
+}
+ORD_T = [3, 4, 5]
 # 12절: 판별력 외부 검증 확장 (9절과 같은 조건·비교, 결과 보기 전에 고정)
 DISC_CONDS = ["fs", "c1_none", "fs_shuffled", "real_global", "hyb_none", "ellipse"]
 DISC_COMPARISONS = [
@@ -112,5 +118,5 @@ _TEST_SUFFIX = os.environ.get("VINDR_TEST_SUFFIX", "")  # 동작 확인용 (실�
 
 
 def run_dir(cond: str, seed: int) -> Path:
-    gaze, tag = CONDITIONS[cond]
+    gaze, tag = {**CONDITIONS, **ORD_CONDITIONS}[cond]
     return RUNS / f"findings_gaze-{gaze}_t3_seed{seed}_{tag}{_TEST_SUFFIX}"
