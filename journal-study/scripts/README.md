@@ -42,5 +42,7 @@
 | [build_padchest_cache.py](build_padchest_cache.py) | 14절: PadChest 의사 label 정면 영상 선택(plan) → zip별 다운로드·512 변환·zip 삭제(run, monitor) → labels.csv·전처리 선택·QC(finalize) |
 | [sweep_ord.py](sweep_ord.py) | 16절: 순서형 확신도 출력(≥3·≥4·≥5) 학습 (ord_fs, ord_c1 × seed 0~9)과 val 요약 |
 | [evaluate_ordinal.py](evaluate_ordinal.py) | 16절 평가: 문턱 선택 t*(k)(내부 5명 판독) → H5 정보 없음, H6 유병률, H7 판별력 유지 |
+| [sweep_gazefrac.py](sweep_gazefrac.py) | 17절: 시선 양 학습 곡선 학습 (fs_gf25·50·75 × seed 0~9) |
+| [evaluate_gazefrac.py](evaluate_gazefrac.py) | 17절 평가: 시선 비율별 외부 AUROC, 양-반응 기울기(G1), 포화(G2) |
 
 분석 계획: [../ANALYSIS_PLAN.md](../ANALYSIS_PLAN.md) (test 평가 전 고정)

@@ -51,6 +51,10 @@ C3 옵션 (2026-11-18 추가, ANALYSIS_PLAN.md 8절 C3)
                  checkpoint 선택은 기존과 같은 val ≥3 loss. temperature는 출력마다 val에서
     --ordinal-weight w   ≥4·≥5 BCE 가중치 (기본 1, 사전 고정)
 
+17절 옵션 (2026-11-24 추가): 시선 양 학습 곡선
+    --gaze-frac f    train 영상 중 무작위 f 비율에만 시선 지도를 줌 (label은 모든 영상 그대로).
+                     영상 순서는 seed마다 고정된 무작위 순열 → 같은 seed에서 25% ⊂ 50% ⊂ 75% ⊂ 100% (중첩)
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -202,6 +206,12 @@ def gaze_source(df: pd.DataFrame, args) -> pd.Series:
     if args.gaze in ("shuffled", "fs-shuffled"):
         smap = pd.read_csv(PROC / f"shuffle_map_seed{args.split_seed}.csv").set_index("dicom_id")["donor_dicom_id"]
         src = src.map(smap)
+    frac = getattr(args, "gaze_frac", 1.0)
+    if frac < 1.0:  # 17절: train 영상 중 일부에만 시선 (seed별 고정 순열, 비율끼리 중첩)
+        ids = np.sort(df.loc[df["split"] == "train", "dicom_id"].unique())
+        perm = np.random.default_rng(10_000 + args.seed).permutation(ids)
+        keep = set(perm[:int(round(frac * len(ids)))])
+        src = src.where(df["dicom_id"].isin(keep))
     return src
 
 
@@ -456,6 +466,7 @@ def main() -> None:
     ap.add_argument("--smooth-max", type=float, default=0.0)
     ap.add_argument("--diff-target", choices=["none", "gaze", "gaze-shuffled", "certainty", "free"], default="none")
     ap.add_argument("--diff-weight", type=float, default=0.0)
+    ap.add_argument("--gaze-frac", type=float, default=1.0, help="17절: 시선 지도를 줄 train 영상 비율")
     ap.add_argument("--ordinal", action="store_true", help="16절: 확신도 ≥3·≥4·≥5 순서형 출력")
     ap.add_argument("--ordinal-weight", type=float, default=1.0)
     ap.add_argument("--tag", default="")
