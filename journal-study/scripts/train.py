@@ -57,6 +57,10 @@ C3 옵션 (2026-11-18 추가, ANALYSIS_PLAN.md 8절 C3)
     --gaze-frac f    train 영상 중 무작위 f 비율에만 시선 지도를 줌 (label은 모든 영상 그대로).
                      영상 순서는 seed마다 고정된 무작위 순열 → 같은 seed에서 25% ⊂ 50% ⊂ 75% ⊂ 100% (중첩)
 
+22절 옵션 (2026-11-24 추가): 시선 출처별 분석 (REFLACX는 판독의 번호를 공개하지 않음 → 출처 = 판독의 집단)
+    --gaze-source all|egd|reflacx   egd = EGD-CXR(판독의 1명)만 시선, reflacx = REFLACX(판독의 5명)만 시선.
+                                    두 데이터에 모두 있는 영상(egd+reflacx)은 egd·reflacx 조건에서 시선 제외. label은 모든 영상 그대로
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -208,6 +212,9 @@ def gaze_source(df: pd.DataFrame, args) -> pd.Series:
     if args.gaze in ("shuffled", "fs-shuffled"):
         smap = pd.read_csv(PROC / f"shuffle_map_seed{args.split_seed}.csv").set_index("dicom_id")["donor_dicom_id"]
         src = src.map(smap)
+    gsrc = getattr(args, "gaze_source", "all")
+    if gsrc != "all":  # 22절: 한 출처(판독의 집단)의 시선만
+        src = src.where(df["datasets"] == gsrc)
     frac = getattr(args, "gaze_frac", 1.0)
     if frac < 1.0:  # 17절: train 영상 중 일부에만 시선 (seed별 고정 순열, 비율끼리 중첩)
         ids = np.sort(df.loc[df["split"] == "train", "dicom_id"].unique())
@@ -470,6 +477,7 @@ def main() -> None:
     ap.add_argument("--diff-target", choices=["none", "gaze", "gaze-shuffled", "certainty", "free"], default="none")
     ap.add_argument("--diff-weight", type=float, default=0.0)
     ap.add_argument("--gaze-frac", type=float, default=1.0, help="17절: 시선 지도를 줄 train 영상 비율")
+    ap.add_argument("--gaze-source", choices=["all", "egd", "reflacx"], default="all", help="22절: 시선 출처")
     ap.add_argument("--ordinal", action="store_true", help="16절: 확신도 ≥3·≥4·≥5 순서형 출력")
     ap.add_argument("--ordinal-weight", type=float, default=1.0)
     ap.add_argument("--tag", default="")

@@ -17,7 +17,7 @@ import pandas as pd
 import torch
 from PIL import Image
 
-from cal_common import CONDITIONS, DATASETS, FINDINGS_MODEL, GF_CONDITIONS, INTERNAL_VAL, NIH_CONDITIONS, ORD_CONDITIONS, PROC, S10, UNCERTAINTY_CONDS, run_dir
+from cal_common import CONDITIONS, DATASETS, FINDINGS_MODEL, GF_CONDITIONS, INTERNAL_VAL, NIH_CONDITIONS, ORD_CONDITIONS, PROC, SRC_CONDITIONS, S10, UNCERTAINTY_CONDS, run_dir
 from train import Net
 
 
@@ -40,7 +40,7 @@ def main():
         ids = pd.read_csv(ds["labels"]).image_id.tolist()
         conds = list(CONDITIONS)
     if args.conds:
-        bad = [c for c in args.conds if not any(c in d for d in (CONDITIONS, ORD_CONDITIONS, GF_CONDITIONS, NIH_CONDITIONS))]
+        bad = [c for c in args.conds if not any(c in d for d in (CONDITIONS, ORD_CONDITIONS, GF_CONDITIONS, NIH_CONDITIONS, SRC_CONDITIONS))]
         if bad:
             raise SystemExit(f"모르는 조건: {bad}")
         conds = args.conds
