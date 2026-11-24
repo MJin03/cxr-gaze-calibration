@@ -46,5 +46,6 @@
 | [evaluate_gazefrac.py](evaluate_gazefrac.py) | 17절 평가: 시선 비율별 외부 AUROC, 양-반응 기울기(G1), 포화(G2) |
 | [count_pleural_words.py](count_pleural_words.py) | 18절: 판독 음성기록의 흉막 세부 소견 단어(흉수·비후·폐첨부·CPA 둔화·plaque) 언급 영상 수 |
 | [sweep_nih.py](sweep_nih.py) | 19절: NIH 사전학습 DenseNet 위에서 nih_c1·nih_hyb_none·nih_fs·nih_fs_shuffled 설정 탐색(val) → 선택 → seed 0~9 |
+| [evaluate_localization.py](evaluate_localization.py) | 20절: CheXlocalize 전문의 분할·VinDr 박스로 attention 위치 평가 (hit, energy, mIoU, 사람 기준) |
 
 분석 계획: [../ANALYSIS_PLAN.md](../ANALYSIS_PLAN.md) (test 평가 전 고정)

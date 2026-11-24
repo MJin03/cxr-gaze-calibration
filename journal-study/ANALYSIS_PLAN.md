@@ -682,6 +682,22 @@ NLL (쌍·조건·seed 평균). gap 회복 = (raw − prev_reader) / (raw − or
   보조: nih_fs − nih_hyb_none, nih_fs − fs (강한 모델 + 시선이 기존 최선보다 나은지), missed
 - 해석: H8 불충족이면 "시선 효과는 약한 모델·적은 데이터에서 주로 나타남"으로 정직하게 보고 (17절 포화 결과와 함께)
 
+## 20. 위치 평가 (약점 ②, 2026-11-24, 실행 전에 고정. scripts/evaluate_localization.py)
+
+질문: 시선으로 학습한 모델이 실제 병변 위치를 보고 판단하나? (판별력 향상의 이유)
+- 데이터: CheXlocalize — CheXpert test 518장의 전문의 병변 분할(gt_segmentations_test), 다른 전문의의 분할(hb_segmentations_test = 사람 기준).
+  분할 이름: 흉막 → Pleural Effusion(흉수 양성 영상), 심장비대 → Cardiomegaly, 폐부종 → Edema. 대상 = 양성이고 분할이 비어 있지 않은 영상
+  보조: VinDr test 전문의 박스(흉막 = 흉수·흉막 비후, 심장비대) — 9절과 같은 정의로 일관성 확인
+- 모델 위치 지도: hybrid3 조건이 외부 예측 때 저장한 소견별 attention (16×16 → softmax). 재학습·재예측 없음
+- 지표 (영상별 → seed 평균): hit(pointing game, 가장 강한 칸이 병변과 겹침, 9절과 같음), energy(병변 안 attention 비율, 임계값 없음)
+  보조: mIoU (CheXlocalize 방식, attention을 512로 늘려 최댓값 대비 τ 이상을 병변으로 봄, τ는 CheXpert validation 분할로 조건·소견별 선택)
+  기준선: 무작위(병변 면적 비율·병변 칸 비율), 사람(다른 전문의 분할과 정답 분할의 mIoU)
+- 비교 (환자 + seed bootstrap 2,000회, ci2)
+  L1 주: fs − hyb_none (같은 구조, 시선 학습 여부만 다름) → hit·energy CI 하한 > 0이면 "시선 학습이 병변 위치를 더 보게 함"
+  L2 주: fs − fs_shuffled → "시선의 내용이 위치를 가르침"
+  보조: fs − real_global, fs − ellipse(판독의가 그린 타원), nih_fs − nih_hyb_none, nih_fs − nih_fs_shuffled (19절 예측 후 다시 실행)
+- 제외 (필요 시 별도): 시선 없는 avg 모델(c1_none)은 attention이 없어 Grad-CAM이 필요 → GPU 사용, 19절 학습이 끝난 뒤 판단
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)
