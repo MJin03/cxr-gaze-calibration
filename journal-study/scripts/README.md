@@ -44,5 +44,6 @@
 | [evaluate_ordinal.py](evaluate_ordinal.py) | 16절 평가: 문턱 선택 t*(k)(내부 5명 판독) → H5 정보 없음, H6 유병률, H7 판별력 유지 |
 | [sweep_gazefrac.py](sweep_gazefrac.py) | 17절: 시선 양 학습 곡선 학습 (fs_gf25·50·75 × seed 0~9) |
 | [evaluate_gazefrac.py](evaluate_gazefrac.py) | 17절 평가: 시선 비율별 외부 AUROC, 양-반응 기울기(G1), 포화(G2) |
+| [count_pleural_words.py](count_pleural_words.py) | 18절: 판독 음성기록의 흉막 세부 소견 단어(흉수·비후·폐첨부·CPA 둔화·plaque) 언급 영상 수 |
 
 분석 계획: [../ANALYSIS_PLAN.md](../ANALYSIS_PLAN.md) (test 평가 전 고정)
