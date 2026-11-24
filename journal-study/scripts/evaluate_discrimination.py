@@ -21,6 +21,15 @@ import numpy as np
 import pandas as pd
 
 from cal_common import DATASETS, DISC_COMPARISONS, DISC_CONDS, NI_MARGIN, RESULTS, S10, run_dir
+
+# 19절: 강한 모델(NIH 사전학습) 비교 세트. --cond-set nih
+COND_SETS = {
+    "base": (DISC_CONDS, DISC_COMPARISONS),
+    "nih": (["nih_fs", "nih_c1", "nih_fs_shuffled", "nih_hyb_none", "fs", "c1_none"],
+            [("nih_fs", "nih_c1", "primary"), ("nih_fs", "nih_fs_shuffled", "primary"),
+             ("nih_fs", "nih_hyb_none", "secondary"),
+             ("nih_c1", "c1_none", "strength"), ("nih_fs", "fs", "strength")]),
+}
 from evaluate_calibration import AUC, sig
 from evaluate_rolling import metrics as roll_metrics
 from evaluate_rolling import referral_prob
@@ -34,7 +43,7 @@ def load(dataset, allow_missing):
     lab = pd.read_csv(ds["labels"])
     groups = lab["group"].values if "group" in lab.columns else np.arange(len(lab))
     data, seeds = {}, {}
-    for c in DISC_CONDS:
+    for c in DISC_CONDS:  # main()에서 --cond-set으로 바뀔 수 있음
         ok = []
         for s in S10:
             d = run_dir(c, s)
@@ -86,7 +95,7 @@ def evaluate(dataset, n_boot, allow_missing):
             for f in findings:
                 m = {s: pre[(c, s, f)](w) for s in set(pick[c]) | {"ens"}}
                 val[(c, f)] = (np.mean([m[s] for s in pick[c]], 0), m["ens"])
-        for a, bb, kind in DISC_COMPARISONS:
+        for a, bb, kind in DISC_COMPARISONS:  # 위와 같음
             if a in seeds and bb in seeds:
                 for f in findings:
                     for j, metric in enumerate(["auroc", "missed"]):
@@ -134,8 +143,10 @@ def main():
     ap.add_argument("--n-boot", type=int, default=2000)
     ap.add_argument("--allow-missing", action="store_true", help="동작 확인용")
     ap.add_argument("--tag", default="", help="결과 폴더 eval_disc_{tag} (기존 12절 결과를 덮어쓰지 않도록)")
+    ap.add_argument("--cond-set", choices=list(COND_SETS), default="base", help="19절: nih = 강한 모델 비교")
     args = ap.parse_args()
-    global OUT
+    global OUT, DISC_CONDS, DISC_COMPARISONS
+    DISC_CONDS, DISC_COMPARISONS = COND_SETS[args.cond_set]
     if args.tag:
         OUT = RESULTS / f"eval_disc_{args.tag}"
     OUT.mkdir(parents=True, exist_ok=True)

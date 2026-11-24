@@ -660,6 +660,28 @@ NLL (쌍·조건·seed 평균). gap 회복 = (raw − prev_reader) / (raw − or
    하나라도 부족하면 진행하지 않음 (학습 자료 부족으로 모델이 해당 세부 소견을 배울 수 없음)
    참고: REFLACX 구조화 label 중 Pleural effusion·Pleural thickening 구분은 phase 1(5명 판독, 내부 test 109장)에만 있어 학습에 못 씀
 
+### 18절 결과 (2026-11-24, count_pleural_words.py)
+
+- 판독 기록이 있는 영상 3,671/3,689장. train 흉막 양성 700장 중 부정 없는 언급: effusion 557, thickening 58, apical 56, blunting 21, plaque 3
+- 판단 규칙: thickening·apical이 100장 미만 → **세부 출력 실험 진행하지 않음** (모델이 세부 소견을 배울 자료 부족)
+- 참고: apical은 흉막 음성 영상에서도 69장 언급 (폐첨부 기흉·관 끝 위치 등 다른 맥락) → 단어만으로는 세부 label로도 부정확
+- 따라서 범위 차이는 ① 공통 범위(흉수) 채점과 15절 pleural_cpa 민감도 분석으로 보고하고 모델 쪽 보완은 하지 않음
+
+## 19. 강한 모델에서 시선 효과 (B 개편, 2026-11-24 사용자 결정. 학습 전에 고정. scripts/sweep_nih.py)
+
+동기: 가장 큰 예상 지적 "약한 모델(ImageNet DenseNet, 학습 2,559장)이라 시선이 도움이 된 것 아닌가?"
+- backbone: torchxrayvision densenet121-res224-nih (NIH ChestX-ray14 약 11만 장으로만 사전학습). 외부 평가 7곳(VinDr·CheXpert·PadChest)과 MIMIC 미포함
+  → 외부 7곳이 모두 "처음 보는 병원"으로 유지됨. 입력 512, 1채널, [−1024, 1024] 정규화 (torchxrayvision 규칙)
+- 조건 (기존과 같은 구조): nih_c1 (avg, 시선 없음) / nih_hyb_none (hybrid3, 시선 없음) / nih_fs (hybrid3, 소견별 시선) / nih_fs_shuffled (다른 환자 시선)
+- 설정 탐색 (내부 val만, seed 0~2): lr ∈ {1e-4, 3e-5} (세 조건), λ ∈ {0.1, 0.3, 1.0} (nih_fs). nih_fs_shuffled는 nih_fs와 같은 설정 (대조군이라 따로 조정 안 함)
+  선택 규칙: val NLL seed 평균 최저, 같으면 val AUROC(흉막·심장비대). 선택 결과는 results/nih_choice.json → seed 0~9
+- 평가: 12절과 같은 방법 (외부 7곳 AUROC 주, missed 보조, ci2, random-effects 통합). evaluate_discrimination.py --cond-set nih
+- 판정
+  S0 강한 모델 확인: nih_c1 − c1_none 통합 AUROC > 0 (CI 하한 > 0)이면 "NIH 사전학습 모델이 실제로 더 강함". 아니면 그대로 보고하고 직접 사전학습(C안) 검토
+  H8 주: nih_fs − nih_c1, nih_fs − nih_fs_shuffled 통합 AUROC CI 하한 > 0 (흉막 이상·심장비대·폐부종) → "강한 모델에서도 시선 효과 유지"
+  보조: nih_fs − nih_hyb_none, nih_fs − fs (강한 모델 + 시선이 기존 최선보다 나은지), missed
+- 해석: H8 불충족이면 "시선 효과는 약한 모델·적은 데이터에서 주로 나타남"으로 정직하게 보고 (17절 포화 결과와 함께)
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)
@@ -669,6 +691,7 @@ NLL (쌍·조건·seed 평균). gap 회복 = (raw − prev_reader) / (raw − or
    - 2026-11-24 완료: 14절(판별력 7곳, 13절 PadChest, 판독 보정 PadChest), 16절(H5·H6 불충족, H7 비열등)
 5. 17절 시선 양 학습 곡선 (2026-11-24 완료: 양-반응 있음, 50%에서 포화)
 6. CheXlocalize 전문의 분할로 위치 평가
-7. B: 두 번째 backbone(예: ConvNeXt)으로 c1_none, fs, fs_shuffled 반복. 설정은 내부 val로만, 세 조건에 같은 탐색 범위.
+7. B → 19절 강한 모델(NIH 사전학습)로 개편 (2026-11-24). 이후 약점 보완 순서: 위치 평가 → 판독의별(leave-one-reader-out) → 임상 지표·다중 비교 보정 → 소견 확장
+   (원래 B: 두 번째 backbone(예: ConvNeXt)으로 c1_none, fs, fs_shuffled 반복. 설정은 내부 val로만, 세 조건에 같은 탐색 범위.
    외부 데이터는 B 설계에 쓰지 않았으므로 B의 확인 데이터로 사용 가능. 계획은 실행 전에 별도 고정
 

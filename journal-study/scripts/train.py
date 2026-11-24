@@ -11,7 +11,9 @@ Baseline과 gaze 모델이 완전히 같은 코드로 돌도록 --gaze 옵션 �
     --task class3    이전 연구 재현용 EGD 3분류 (정상/CHF/폐렴), 이전 연구 split 사용, gaze none만
 
 개선 옵션 (2026-11-17 추가)
-    --backbone imagenet|chexpert   chexpert = torchxrayvision densenet121-res224-chex (CheXpert로만 사전학습,
+    --backbone imagenet|chexpert|nih   nih = torchxrayvision densenet121-res224-nih (NIH ChestX-ray14로만 사전학습, 19절 강한 모델.
+                                   외부 평가 7곳과 MIMIC 미포함). chexpert와 같은 1채널·정규화
+                                   chexpert = torchxrayvision densenet121-res224-chex (CheXpert로만 사전학습,
                                    MIMIC-CXR 미포함 → test 누수 없음). 1채널, [-1024, 1024] 정규화
     --schedule constant|cosine     cosine = 1 epoch warmup 후 cosine 감소
     --pool avg|attn                attn = 1×1 conv 위치 분포로 feature를 가중 평균해 분류 (gaze 조건이면 그 분포를 gaze로 학습)
@@ -286,9 +288,10 @@ class Net(nn.Module):
     def __init__(self, n_out: int, backbone: str, pretrained: bool, pool: str, diff: bool = False, ordinal: bool = False):
         super().__init__()
         self.backbone, self.pool = backbone, pool
-        if backbone == "chexpert":
+        if backbone in ("chexpert", "nih"):
             import torchxrayvision as xrv
-            base = xrv.models.DenseNet(weights="densenet121-res224-chex" if pretrained else None)
+            w = {"chexpert": "densenet121-res224-chex", "nih": "densenet121-res224-nih"}[backbone]
+            base = xrv.models.DenseNet(weights=w if pretrained else None)
         else:
             base = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None)
         self.features = base.features
@@ -316,7 +319,7 @@ class Net(nn.Module):
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
 
     def forward(self, x):  # x: B×1×H×W, 0~1
-        if self.backbone == "chexpert":
+        if self.backbone in ("chexpert", "nih"):
             x = x * 2048 - 1024
         else:
             x = (x.expand(-1, 3, -1, -1) - self.mean) / self.std
@@ -459,7 +462,7 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--img-size", type=int, default=512)
     ap.add_argument("--no-pretrained", action="store_true")
-    ap.add_argument("--backbone", choices=["imagenet", "chexpert"], default="imagenet")
+    ap.add_argument("--backbone", choices=["imagenet", "chexpert", "nih"], default="imagenet")
     ap.add_argument("--schedule", choices=["constant", "cosine"], default="constant")
     ap.add_argument("--pool", choices=["avg", "attn", "attn3", "hybrid3"], default="avg")
     ap.add_argument("--smooth", choices=["none", "gaze", "gaze-shuffled", "certainty", "uniform"], default="none")

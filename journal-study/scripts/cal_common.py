@@ -52,6 +52,14 @@ ORD_CONDITIONS = {
 ORD_T = [3, 4, 5]
 # 17절: 시선 양 학습 곡선 (fs와 같은 설정, train 영상 중 일부에만 시선). 0% = hyb_none, 100% = fs
 GF_CONDITIONS = {f"fs_gf{int(f * 100)}": ("fs", f"{HYB}_lam0.3_gf{f:g}") for f in [0.25, 0.5, 0.75]}
+# 19절: 강한 모델 (NIH 사전학습 DenseNet). 설정은 내부 val로 고른 뒤 sweep_nih.py가 results/nih_choice.json에 기록
+def _nih_conditions():
+    import json
+    f = Path.home() / "X-ray/results/nih_choice.json"
+    return {k: tuple(v) for k, v in json.load(open(f))["conditions"].items()} if f.exists() else {}
+
+
+NIH_CONDITIONS = _nih_conditions()
 # 12절: 판별력 외부 검증 확장 (9절과 같은 조건·비교, 결과 보기 전에 고정)
 DISC_CONDS = ["fs", "c1_none", "fs_shuffled", "real_global", "hyb_none", "ellipse"]
 DISC_COMPARISONS = [
@@ -120,5 +128,5 @@ _TEST_SUFFIX = os.environ.get("VINDR_TEST_SUFFIX", "")  # 동작 확인용 (실�
 
 
 def run_dir(cond: str, seed: int) -> Path:
-    gaze, tag = {**CONDITIONS, **ORD_CONDITIONS, **GF_CONDITIONS}[cond]
+    gaze, tag = {**CONDITIONS, **ORD_CONDITIONS, **GF_CONDITIONS, **NIH_CONDITIONS}[cond]
     return RUNS / f"findings_gaze-{gaze}_t3_seed{seed}_{tag}{_TEST_SUFFIX}"
