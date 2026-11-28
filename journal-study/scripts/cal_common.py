@@ -148,6 +148,11 @@ for _k, (_img, _lab) in {
         "padchest_b_more": (PROC / "padchest", PROC / "padchest/labels_more_b.csv")}.items():
     DATASETS[_k] = dict(img=_img, labels=_lab, findings=_more_findings(_lab), internal=_k.startswith("internal"))
 MORE_EXTERNAL = [k for k in DATASETS if k.endswith("_more") and not k.startswith("internal")]
+# 26절 B: PadChest 무기폐 엄격 label (laminar만 있는 영상 제외). 예측은 *_more 파일을 그대로 씀 (preds = 예측 파일 이름)
+for _b in ["a", "b"]:
+    _lab = PROC / f"padchest/labels_more_strict_{_b}.csv"
+    DATASETS[f"padchest_{_b}_more_strict"] = dict(img=PROC / "padchest", labels=_lab, preds=f"padchest_{_b}_more",
+                                                  findings={"atelectasis": "atelectasis"} if _lab.exists() else {})
 
 
 def train_prevalence():

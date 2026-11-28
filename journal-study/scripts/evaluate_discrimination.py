@@ -60,7 +60,7 @@ def load(dataset, allow_missing):
         ok = []
         for s in S10:
             d = run_dir(c, s)
-            f_pred = d / f"preds_{dataset}.csv"
+            f_pred = d / f"preds_{ds.get('preds', dataset)}.csv"   # 26절: 다른 label로 같은 예측을 평가할 때
             if not f_pred.exists():
                 if allow_missing:
                     continue

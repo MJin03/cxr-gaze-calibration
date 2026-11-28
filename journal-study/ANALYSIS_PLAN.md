@@ -961,6 +961,22 @@ train 영상 중 출처 비율: EGD 30.2%, REFLACX 69.6%
 - 같은 특이도 90%에서 양성 1,000명당 무기폐 36명, 경화 88명을 더 찾아냄 (통합 유병률 6.0%·1.3%라 전체 1,000명 기준 놓친 환자 감소는 2.2명·1.1명)
 - 판정: 위치·임상 지표 모두 25절 판별력 결과와 같은 방향 → 소견 확장 결론을 뒷받침
 
+## 26. 시선 이득 크기의 차이 설명 (한계 ①② 폐부종·PadChest, 2026-11-28, 결과 보기 전에 고정. scripts/evaluate_effectsize.py)
+
+동기: 폐부종(특히 ConvNeXt)과 PadChest에서 시선 이득이 작음. 설정을 바꿔 다시 학습하지 않고(사후 조정 방지), 이미 있는 결과로 원인을 확인
+- A. 이득 크기 설명 분석 (random-effects meta-regression, DerSimonian–Laird τ²)
+  - 단위: 모델 집단(imagenet fs − c1_none / nih_fs − nih_c1 / cnx_fs − cnx_c1 / more_fs − more_c1) × 외부 데이터 × 소견(흉막·심장비대·폐부종·무기폐·경화)의 AUROC 이득,
+    표준오차 = ci2 폭 / 3.92. 하위 label(흉수·pleural_cpa·edema_hi)은 중복이라 제외
+  - 설명 변수: base_auc(대조 모델 AUROC, 천장 효과), report(PadChest 판독문 label = 1), area(CheXlocalize 전문의 분할 평균 면적 비율, 소견별), 모델 집단 더미
+  - 가설: M1 base_auc 계수 < 0, M2 report 계수 < 0, M3 area 계수 < 0 (95% CI 상한 < 0이면 지지)
+  - 같은 영상을 여러 모델·소견이 공유 → 보조로 데이터 단위 cluster bootstrap CI (2,000회). 단변수 모형도 함께 보고
+  - 보조 결과: 같은 분석을 fs − fs_shuffled 계열 이득에도
+- B. PadChest 무기폐 엄격 label 민감도 분석
+  - 'laminar atelectasis'(얇은 판상 무기폐)만 있는 영상은 제외, 나머지 무기폐 label(atelectasis·lobar·segmental·round·total)이 있으면 양성
+  - 같은 예측으로 평가 (evaluate_discrimination.py --cond-set more --tag more_strict)
+  - S1 (기술적): 엄격 label에서 more_fs − more_c1 이득이 원래 label(a +0.011, b +0.013)보다 크면 판독문 label 노이즈 설명을 뒷받침
+- 해석: 지지되지 않으면 그대로 보고. 어떤 결과든 학습 설정은 바꾸지 않음
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)
