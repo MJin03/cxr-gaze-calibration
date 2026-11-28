@@ -10,8 +10,12 @@
 ② 다중 비교 보정 (Holm): 주 판별력 비교 6개(fs − c1_none, fs − fs_shuffled × 흉막·심장비대·폐부종)의 7곳 통합 AUROC
    (results/eval_disc_7sites/pooled.csv, 표준오차 = CI 폭 / 3.92) → 양측 p값 → Holm 보정. 보정 후 p < 0.05면 유지
 
-사용법  python evaluate_clinical.py [--n-boot 1000]
-출력    results/clinical/ (clinical.csv, pooled.csv, holm.csv)
+25절 소견 확장 (2026-11-28 추가): --set more
+   무기폐·경화, 외부 *_more 데이터(양성 ≥ 30), 비교 more_fs − more_c1, more_fs − more_fs_shuffled. 같은 지표·bootstrap·통합
+   Holm은 판별력 평가(evaluate_discrimination.py --cond-set more)에서 이미 했으므로 여기서는 하지 않음
+
+사용법  python evaluate_clinical.py [--n-boot 1000] [--set more]
+출력    results/clinical/ (clinical.csv, pooled.csv, holm.csv), more = results/clinical_more/
 """
 import argparse
 from math import erf, sqrt
@@ -19,7 +23,7 @@ from math import erf, sqrt
 import numpy as np
 import pandas as pd
 
-from cal_common import DATASETS, RESULTS, S10, run_dir
+from cal_common import DATASETS, MORE_EXTERNAL, RESULTS, S10, run_dir
 from evaluate_discrimination import dersimonian_laird
 
 OUT = RESULTS / "clinical"
@@ -79,8 +83,16 @@ def holm():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-boot", type=int, default=1000)
-    ap.add_argument("--datasets", nargs="*", default=DS7)
+    ap.add_argument("--datasets", nargs="*", default=None)
+    ap.add_argument("--set", choices=["base", "more"], default="base", help="25절: more = 무기폐·경화")
     args = ap.parse_args()
+    global OUT, CONDS, COMPS
+    if args.set == "more":
+        OUT, CONDS = RESULTS / "clinical_more", ["more_fs", "more_c1", "more_fs_shuffled"]
+        COMPS = [("more_fs", "more_c1"), ("more_fs", "more_fs_shuffled")]
+        args.datasets = [d for d in (args.datasets or MORE_EXTERNAL) if DATASETS[d]["findings"]]
+    else:
+        args.datasets = args.datasets or DS7
     rng = np.random.default_rng(0)
     OUT.mkdir(parents=True, exist_ok=True)
     rows, comps = [], []
@@ -145,7 +157,7 @@ def main():
             extra = f" → 놓친 환자 {-x.estimate * x.prev_pooled * 1000:+.1f}명/1,000명 (유병률 {x.prev_pooled:.1%})" if x.metric == "sens@spec90" else ""
             print(f"  {x.finding:16s} {x.metric:12s} {x.estimate:+.3f} [{x.low:+.3f}, {x.high:+.3f}]{star} (n={x.n_data}, I² {100 * x.i2:.0f}%){extra}")
 
-    h = holm()
+    h = holm() if args.set == "base" else None
     if h is not None:
         h.to_csv(OUT / "holm.csv", index=False)
         print("\n=== 다중 비교 보정 (Holm, 주 판별력 비교 6개, 7곳 통합 AUROC)")

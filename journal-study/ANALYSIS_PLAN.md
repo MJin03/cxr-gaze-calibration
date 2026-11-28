@@ -870,6 +870,36 @@ train 영상 중 출처 비율: EGD 30.2%, REFLACX 69.6%
 - 순서: CPU(label·시선 지도, 바로 가능) → GPU 학습(23절 ConvNeXt 끝난 뒤 자동 시작) → 예측 → 평가
 - 위치 평가(CheXlocalize에 무기폐·경화 분할 있음)는 판별력 결과를 본 뒤 별도로 고정
 
+### 25절 결과 (2026-11-28, results/eval_disc_more_internal·eval_disc_more_ext, logs/more_eval.txt, 규칙대로 한 번 평가)
+
+- 코호트: REFLACX 영상 train 1,787 / val 359 / test 470. 양성 train 무기폐 449·경화 450, test 139·131. 셔플 매핑 같은 환자 0건
+- 평가 데이터: 무기폐 외부 5곳(CheXpert test·val, VinDr test, PadChest a·b), 경화 외부 4곳(CheXpert val, VinDr test, PadChest a·b)
+  (양성 < 30 제외: 무기폐 VinDr train 10·새 train 14, 경화 CheXpert test 29·VinDr train 26·새 train 27)
+
+| 비교 (AUROC) | 무기폐 내부 test | 무기폐 외부 통합 | 경화 내부 test | 경화 외부 통합 |
+|---|---|---|---|---|
+| more_fs − more_c1 (주) | +0.021 [+0.001, +0.043] ✓ | +0.024 [+0.010, +0.038] ✓ (I² 53%) | +0.023 [+0.006, +0.041] ✓ | +0.018 [+0.003, +0.033] ✓ (I² 43%) |
+| more_fs − more_fs_shuffled (주) | +0.028 [+0.004, +0.054] ✓ | +0.023 [+0.007, +0.039] ✓ (I² 68%) | +0.019 [+0.003, +0.036] ✓ | +0.018 [+0.008, +0.028] ✓ (I² 0%) |
+| more_fs − more_hyb_none (보조) | +0.032 ✓ | +0.035 [+0.017, +0.054] ✓ | +0.030 ✓ | +0.023 [+0.011, +0.036] ✓ |
+
+- Holm 보정 (주 비교 4개, 외부 통합): 보정 p 0.002 ~ 0.022 → 4개 모두 유지 ✓
+- missed (보조, 외부 통합): 무기폐 fs − c1 −0.023 ✓, fs − shuffled −0.017 ✓ / 경화 fs − shuffled −0.036 ✓, fs − c1 −0.036 (CI가 0 포함)
+- 병원별: 무기폐는 CheXpert(+0.04)가 크고 PadChest(+0.01)가 작음 → I² 53~68%. 기존 3개 소견에서도 PadChest(판독문 1명 label) 효과가 작았던 것과 같은 방향
+- 시선 없이 구조만 바꾼 more_hyb_none은 more_c1보다 같거나 낮음 → 이득은 구조가 아니라 시선에서 옴
+- 판정 (사전 규칙): 두 소견 모두 E1·E2가 Holm 후 유지 → 시선 효과가 다른 소견(무기폐·경화)으로 일반화됨. 약점 ③ 해결
+
+## 25-2. 소견 확장 — 위치 평가·임상 지표 (2026-11-28, 25절 판별력 결과 후, 위치·임상 지표를 보기 전에 고정)
+
+- 위치 평가 (evaluate_localization.py --finding-set more, 20절과 같은 방법, 재학습·재예측 없음)
+  - 데이터: CheXlocalize CheXpert test (분할 Atelectasis·Consolidation이 비어 있지 않은 영상 = 전문의가 병변을 그린 양성),
+    mIoU 임계값 τ는 CheXpert val 분할로 선택. 사람 기준 = 다른 전문의 분할(hb). 보조: VinDr test 전문의 박스(Atelectasis·Consolidation)
+  - 지표: hit, energy (주), mIoU (보조), 무작위 기준
+  - 비교 (주): more_fs − more_hyb_none (L1), more_fs − more_fs_shuffled (L2). 영상(환자) + seed bootstrap 2,000회
+  - 병변 있는 양성 영상 20장 미만인 데이터·소견은 비교하지 않고 지표만 보고
+- 임상 지표 (evaluate_clinical.py --set more, 21절과 같은 방법)
+  - sens@spec90, spec@sens90, 놓친 환자 / 1,000명. 외부 *_more 데이터(양성 ≥ 30), random-effects 통합
+  - 비교: more_fs − more_c1, more_fs − more_fs_shuffled. Holm은 25절 판별력에서 이미 함
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)

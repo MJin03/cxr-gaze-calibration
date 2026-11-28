@@ -55,5 +55,7 @@
 | [sweep_more.py](sweep_more.py) | 25절: more_c1·more_hyb_none·more_fs·more_fs_shuffled 학습 (seed 0~9, `train.py --finding-set more`) |
 | [monitor_more.py](monitor_more.py) | 25절: 학습·예측·평가 진행 상황을 1분마다 한 줄로 |
 | [run_more.sh](run_more.sh) | 25절 전체 실행: CPU 준비 → 다른 GPU 작업 끝나기 대기 → 학습 → 예측 → 평가 (로그 results/logs/more_*.txt) |
+| [run_cnx.sh](run_cnx.sh) | 23절 나머지 자동 실행: ConvNeXt 학습 끝나기 대기 → 외부 7곳 예측 → 판별력(S0·H9) → 위치 평가 (로그 results/logs/cnx_*.txt) |
+| [monitor_cnx.py](monitor_cnx.py) | 23절: 학습·예측·평가 진행 상황을 1분마다 한 줄로 (최근 간격으로 남은 시간 계산) |
 
 분석 계획: [../ANALYSIS_PLAN.md](../ANALYSIS_PLAN.md) (test 평가 전 고정)

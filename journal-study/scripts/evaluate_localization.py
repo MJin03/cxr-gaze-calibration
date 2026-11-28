@@ -16,8 +16,15 @@
   주: fs − hyb_none (같은 구조, 시선 학습 여부만 다름), fs − fs_shuffled (시선 내용)
   보조: fs − real_global, fs − ellipse, nih_fs − nih_hyb_none, nih_fs − nih_fs_shuffled (19절 모델이 있으면)
 
-사용법  python evaluate_localization.py [--n-boot 2000]
-출력    results/localization/ (per_image.csv, summary.csv, comparisons.csv)
+25절 소견 확장 (2026-11-28 추가): --finding-set more
+  소견 atelectasis → CheXlocalize "Atelectasis", consolidation → "Consolidation" (분할이 비어 있지 않은 영상 = 전문의가 병변을 그린 양성)
+  VinDr test 박스: annotations_test.csv의 Atelectasis·Consolidation (원본 좌표 → 512)
+  조건 more_fs, more_hyb_none, more_fs_shuffled / 주 비교 more_fs − more_hyb_none, more_fs − more_fs_shuffled
+  attention = 25절 외부 예측 때 저장한 att_{chexpert_test_more|chexpert_valid_more|vindr_test_more}.npy (2채널)
+  병변 있는 양성 영상 20장 미만인 데이터·소견은 비교하지 않음 (지표만 출력)
+
+사용법  python evaluate_localization.py [--n-boot 2000] [--finding-set more]
+출력    results/localization/ (per_image.csv, summary.csv, comparisons.csv), more = results/localization_more/
 """
 import argparse
 import json
@@ -26,7 +33,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from cal_common import CNX_CONDITIONS, DATASETS, NIH_CONDITIONS, PROC, RESULTS, S10, run_dir
+from cal_common import CNX_CONDITIONS, DATASETS, MORE_FINDINGS, NIH_CONDITIONS, PROC, RESULTS, S10, run_dir
 
 RAW = PROC.parent / "raw/chexlocalize/chexlocalize/CheXlocalize"
 OUT = RESULTS / "localization"
@@ -38,6 +45,9 @@ COMPS = [("fs", "hyb_none", "primary"), ("fs", "fs_shuffled", "primary"), ("fs",
          ("fs", "ellipse", "secondary"), ("nih_fs", "nih_hyb_none", "secondary"), ("nih_fs", "nih_fs_shuffled", "secondary"),
          ("cnx_fs", "cnx_hyb_none", "secondary"), ("cnx_fs", "cnx_fs_shuffled", "secondary")]
 TAUS = np.round(np.arange(0.05, 0.96, 0.05), 2)
+MORE = False       # 25절 --finding-set more
+MIN_IMG_MORE = 20
+VINDR_FIND = ["pleural", "cardiac"]
 
 
 # ------------------------------------------------------------ COCO RLE (pycocotools 없이)
@@ -102,6 +112,8 @@ def iou(a, b):
 # ------------------------------------------------------------ 데이터
 def chexloc(split):
     ds = "chexpert_test" if split == "test" else "chexpert_valid"
+    if MORE:
+        ds += "_more"
     lab = pd.read_csv(DATASETS[ds]["labels"])
     gt = json.load(open(RAW / f"gt_segmentations_{split}.json"))
     hb = json.load(open(RAW / "hb_segmentations_test.json")) if split == "test" else {}
@@ -109,7 +121,7 @@ def chexloc(split):
     for f in FIND:
         rows = []
         for k, r in enumerate(lab.itertuples()):
-            if getattr(r, LABEL_COL[f]) != 1 or r.image_id not in gt or TASK[f] not in gt[r.image_id]:
+            if (f in LABEL_COL and getattr(r, LABEL_COL[f]) != 1) or r.image_id not in gt or TASK[f] not in gt[r.image_id]:
                 continue
             m = rle_decode(gt[r.image_id][TASK[f]])
             if not m.any():
@@ -121,16 +133,27 @@ def chexloc(split):
     return ds, items
 
 
+def more_boxes(lab):
+    """25절: VinDr test 원본 박스(Atelectasis·Consolidation)를 512 좌표로 (build_vindr_cache.py와 같은 환산)."""
+    raw = pd.read_csv(PROC.parent / "raw/vindr-cxr/annotations/annotations_test.csv")
+    name = {"Atelectasis": "atelectasis", "Consolidation": "consolidation"}
+    b = raw[raw.class_name.isin(name)].merge(pd.read_csv(DATASETS["vindr_test"]["labels"])[["image_id", "width", "height"]], on="image_id")
+    b["finding"] = b.class_name.map(name)
+    for c, dim in [("x_min", "width"), ("x_max", "width"), ("y_min", "height"), ("y_max", "height")]:
+        b[f"{c}_512"] = b[c] * 512 / b[dim]
+    return b
+
+
 def vindr_items():
-    ds = "vindr_test"
+    ds = "vindr_test_more" if MORE else "vindr_test"
     lab = pd.read_csv(DATASETS[ds]["labels"])
-    box = pd.read_csv(PROC / "vindr_test/boxes.csv")
+    box = more_boxes(lab) if MORE else pd.read_csv(PROC / "vindr_test/boxes.csv")
     items = {}
-    for f in ["pleural", "cardiac"]:
+    for f in VINDR_FIND:
         bf = box[box.finding == f].groupby("image_id")
         rows = []
         for k, r in enumerate(lab.itertuples()):
-            if getattr(r, f) != 1 or r.image_id not in bf.groups:
+            if (not MORE and getattr(r, f) != 1) or r.image_id not in bf.groups:
                 continue
             m = np.zeros((512, 512), bool)
             for b in bf.get_group(r.image_id).itertuples():
@@ -141,6 +164,8 @@ def vindr_items():
 
 
 def conds_available(ds):
+    if MORE:
+        return {c: [s for s in S10 if (run_dir(c, s) / f"att_{ds}.npy").exists()] for c in BASE_CONDS}
     cs = BASE_CONDS + [c for c in ["nih_fs", "nih_hyb_none", "nih_fs_shuffled"] if c in NIH_CONDITIONS] \
         + [c for c in ["cnx_fs", "cnx_hyb_none", "cnx_fs_shuffled"] if c in CNX_CONDITIONS]
     return {c: [s for s in S10 if (run_dir(c, s) / f"att_{ds}.npy").exists()] for c in cs}
@@ -198,7 +223,15 @@ def boot_diff(a_imgs, b_imgs, groups, n_boot, rng):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-boot", type=int, default=2000)
+    ap.add_argument("--finding-set", choices=["base", "more"], default="base", help="25절: more = 무기폐·경화")
     args = ap.parse_args()
+    global MORE, FIND, TASK, LABEL_COL, BASE_CONDS, COMPS, OUT, VINDR_FIND
+    if args.finding_set == "more":
+        MORE, FIND, VINDR_FIND = True, list(MORE_FINDINGS), list(MORE_FINDINGS)
+        TASK, LABEL_COL = {"atelectasis": "Atelectasis", "consolidation": "Consolidation"}, {}
+        BASE_CONDS = ["more_fs", "more_hyb_none", "more_fs_shuffled"]
+        COMPS = [("more_fs", "more_hyb_none", "primary"), ("more_fs", "more_fs_shuffled", "primary")]
+        OUT = RESULTS / "localization_more"
     rng = np.random.default_rng(0)
     OUT.mkdir(parents=True, exist_ok=True)
     summ, comps, per_rows = [], [], []
@@ -211,7 +244,12 @@ def main():
     print("  mIoU 임계값 τ (val에서 선택): " + ", ".join(f"{c}/{f} {t:.2f}" for (c, f), t in sorted(tau.items())), flush=True)
 
     for ds, items in [chexloc("test"), vindr_items()]:
+        if not DATASETS[ds]["labels"].exists():
+            continue
         seeds = {c: s for c, s in conds_available(ds).items() if s}
+        if not seeds:
+            print(f"\n[{ds}] attention 파일 없음 → 건너뜀", flush=True)
+            continue
         print(f"\n[{ds}] 조건 {list(seeds)} | 병변 있는 양성: " + ", ".join(f"{f} {len(r)}장" for f, r in items.items()), flush=True)
         pi = per_image(ds, items, seeds)
         for f, rows in items.items():
@@ -228,7 +266,7 @@ def main():
                              "hit": np.nan, "energy": np.nan, "miou": float(np.nanmean(hb_iou))})
             for c, ss in seeds.items():
                 miou = np.nan
-                if ds == "chexpert_test" and (c, f) in tau:
+                if ds.startswith("chexpert_test") and (c, f) in tau:
                     miou = float(np.mean([np.nanmean([iou(up512(pi[(c, s, f)]["sm"][i]) >= tau[(c, f)], r["m512"])
                                                        for i, r in enumerate(rows)]) for s in ss]))
                 summ.append({"dataset": ds, "finding": f, "cond": c, "n_img": len(rows),
@@ -238,7 +276,7 @@ def main():
                     per_rows += [{"dataset": ds, "finding": f, "cond": c, "seed": s, "image_id": r["image_id"],
                                   "hit": pi[(c, s, f)]["hit"][i], "energy": pi[(c, s, f)]["energy"][i]} for i, r in enumerate(rows)]
             for a, b, kind in COMPS:
-                if a not in seeds or b not in seeds:
+                if a not in seeds or b not in seeds or (MORE and len(rows) < MIN_IMG_MORE):
                     continue
                 for m in ["hit", "energy"]:
                     est = np.mean([pi[(a, s, f)][m].mean() for s in seeds[a]]) - np.mean([pi[(b, s, f)][m].mean() for s in seeds[b]])
