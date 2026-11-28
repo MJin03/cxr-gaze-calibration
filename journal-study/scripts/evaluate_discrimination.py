@@ -13,6 +13,10 @@
 
 사용법  python evaluate_discrimination.py [--datasets chexpert_test vindr_train vindr_train_b chexpert_valid vindr_test] [--tag 이름]
         14절: --datasets (위 5개) padchest_a padchest_b --tag 7sites
+        25절: --cond-set more --datasets internal_test_more --tag more_internal
+              --cond-set more --datasets chexpert_test_more chexpert_valid_more vindr_test_more vindr_train_more
+                                         vindr_train_b_more padchest_a_more padchest_b_more --tag more_ext
+              (양성 < 30인 소견은 label 파일에 열이 없어 자동으로 빠지고, 평가할 소견이 없는 데이터는 건너뜀)
 """
 import argparse
 import json
@@ -34,6 +38,10 @@ COND_SETS = {
             [("cnx_fs", "cnx_c1", "primary"), ("cnx_fs", "cnx_fs_shuffled", "primary"),
              ("cnx_fs", "cnx_hyb_none", "secondary"),
              ("cnx_c1", "c1_none", "strength"), ("cnx_fs", "fs", "strength")]),
+    # 25절: 소견 확장 (무기폐·경화). 데이터는 *_more (내부 test는 internal_test_more, 외부와 따로 실행)
+    "more": (["more_fs", "more_c1", "more_fs_shuffled", "more_hyb_none"],
+             [("more_fs", "more_c1", "primary"), ("more_fs", "more_fs_shuffled", "primary"),
+              ("more_fs", "more_hyb_none", "secondary")]),
 }
 from evaluate_calibration import AUC, sig
 from evaluate_rolling import metrics as roll_metrics
@@ -142,6 +150,27 @@ def mark(lo, hi, kind, metric):
     return "✓" if (lo > 1e-12 or hi < -1e-12) else ""
 
 
+def holm_more(pooled):
+    """25절: 주 비교 4개(more_fs − more_c1, more_fs − more_fs_shuffled × 무기폐·경화)의 통합(전체) AUROC에 Holm 보정 (21절과 같은 방법)."""
+    from math import erf, sqrt
+    p = pooled[(pooled.pool == "통합(전체)") & (pooled.metric == "auroc") & (pooled.kind == "primary")].copy()
+    if p.empty:
+        return
+    p["se"] = (p.ci_high - p.ci_low) / 3.92
+    p["p"] = [2 * (1 - 0.5 * (1 + erf(abs(e / s) / sqrt(2)))) for e, s in zip(p.estimate, p.se)]
+    p = p.sort_values("p").reset_index(drop=True)
+    adj, run = [], 0.0
+    for i, pv in enumerate(p.p):
+        run = max(run, min(1.0, (len(p) - i) * pv))
+        adj.append(run)
+    p["p_holm"] = adj
+    p["유지"] = np.where((p.p_holm < 0.05) & (p.estimate > 0), "✓", "✗")
+    p = p[["comparison", "finding", "estimate", "ci_low", "ci_high", "n_data", "p", "p_holm", "유지"]]
+    print(f"\n=== 25절 Holm 보정 (주 비교 {len(p)}개, 통합(전체) AUROC). 유지 = 보정 p < 0.05이고 fs가 더 좋음")
+    print(p.round(4).to_string(index=False))
+    p.to_csv(OUT / "holm.csv", index=False)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--datasets", nargs="*", default=["chexpert_test", "vindr_train", "vindr_train_b", "chexpert_valid", "vindr_test"])
@@ -157,6 +186,9 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     pers, comps = [], []
     for d in args.datasets:
+        if not DATASETS[d]["findings"]:
+            print(f"[건너뜀] {d}: 평가할 소견 없음 (label 파일 없음 또는 양성 < 30)")
+            continue
         per, comp = evaluate(d, args.n_boot, args.allow_missing)
         pers.append(per)
         comps.append(comp)
@@ -197,6 +229,8 @@ def main():
             print(pd.DataFrame(rows).fillna("없음").to_string(index=False))
     comp.to_csv(OUT / "comparisons_all.csv", index=False)
     pd.DataFrame(pooled).to_csv(OUT / "pooled.csv", index=False)
+    if args.cond_set == "more" and pooled:
+        holm_more(pd.DataFrame(pooled))
     print(f"\n저장: {OUT}")
 
 

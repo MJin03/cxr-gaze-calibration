@@ -34,7 +34,15 @@ finding별 시선 지도
     ~/X-ray/data/processed/fs_build_config.json                  사용한 단어 세트·창 길이
     ~/X-ray/data/processed/qc/fs_*.png                           확인용 그림
 
+25절 소견 확장 (2026-11-28 추가): --finding-set more
+    소견 atelectasis(어근 atelecta), consolidation(어근 consolid) 2채널, 창 3초만, REFLACX 영상만 (이 소견 label이 REFLACX에만 있음)
+    기존 파일을 덮어쓰지 않도록 출력 이름이 다르다
+        heatmaps_fs2_w3_128/{dicom_id}.npy (float16, 2×128×128), fs2_heatmap_index.csv, fs2_mentions.csv,
+        fs2_build_config.json, qc/fs2_*.png. 병변 타원 지도는 만들지 않음
+    label은 build_more_labels.py가 만든 more_labels.csv (atelectasis_t3, consolidation_t3)
+
 사용법  python build_fs_heatmaps.py [--windows 1.5 3 5] [--edema-set v1|v2|v3] [--max-images N]
+        python build_fs_heatmaps.py --finding-set more --windows 3
 """
 import argparse
 import json
@@ -69,6 +77,10 @@ ELLIPSE_COLS = {
     "edema": ["Pulmonary edema"],
 }
 SIZE, OUT_SIZE, SIGMA = 512, 128, 7.0
+# 25절 소견 확장 (REFLACX label: Atelectasis, Consolidation)
+MORE_FINDINGS = ["atelectasis", "consolidation"]
+MORE_ROOTS = {"atelectasis": ["atelecta"], "consolidation": ["consolid"]}
+PREFIX = "fs"   # 출력 이름 앞부분 (more = fs2)
 
 
 # ------------------------------------------------------------ 읽기
@@ -169,10 +181,11 @@ def ellipse_map(ell: pd.DataFrame, finding: str, w: int, h: int):
 
 
 def stack_mean(maps: list):
-    """판독별 3채널 지도(None 가능)를 채널별로 평균. 없는 채널은 0."""
-    out = np.zeros((3, OUT_SIZE, OUT_SIZE))
-    has = np.zeros(3, bool)
-    for k in range(3):
+    """판독별 K채널 지도(None 가능)를 채널별로 평균. 없는 채널은 0. K = len(FINDINGS)"""
+    K = len(FINDINGS)
+    out = np.zeros((K, OUT_SIZE, OUT_SIZE))
+    has = np.zeros(K, bool)
+    for k in range(K):
         ch = [m[k] for m in maps if m[k] is not None]
         if ch:
             a = np.mean(ch, axis=0)
@@ -184,17 +197,19 @@ def save_qc(index: pd.DataFrame, imgs: pd.DataFrame, win: float) -> None:
     qc = PROC / "qc"
     qc.mkdir(exist_ok=True)
     full = index.assign(n_ch=index[[f"fs{win:g}_{f}" for f in FINDINGS]].sum(axis=1)).sort_values("n_ch", ascending=False)
-    picks = pd.concat([full[full.datasets.str.contains("egd")].head(2),
-                       full[(full.datasets == "reflacx") & full.ellipse_any].head(2)])
+    full = full[full.n_ch > 0]  # 지도가 하나라도 있는 영상만
+    picks = (pd.concat([full[full.datasets.str.contains("egd")].head(2),
+                        full[(full.datasets == "reflacx") & full.ellipse_any].head(2)]) if PREFIX == "fs"
+             else full.head(4))
     for k, r in enumerate(picks.itertuples(), 1):
         path = imgs.loc[imgs.dicom_id == r.dicom_id, "image_path"].iloc[0]
         im = Image.open(path).convert("L").resize((OUT_SIZE, OUT_SIZE))
-        fs = np.load(PROC / f"heatmaps_fs_w{win:g}_{OUT_SIZE}" / f"{r.dicom_id}.npy").astype(float)
+        fs = np.load(PROC / f"heatmaps_{PREFIX}_w{win:g}_{OUT_SIZE}" / f"{r.dicom_id}.npy").astype(float)
         gl = PROC / "heatmaps_512_s7" / f"{r.dicom_id}.npy"
         panels = [("global gaze", pool_to_out(np.load(gl).astype(float)) if gl.exists() else None)]
         panels += [(f"{f} gaze ({win:g}s)", fs[i] if fs[i].sum() > 0 else None) for i, f in enumerate(FINDINGS)]
         ep = PROC / f"heatmaps_ellipse_{OUT_SIZE}" / f"{r.dicom_id}.npy"
-        if ep.exists():
+        if ep.exists() and PREFIX == "fs":
             el = np.load(ep).astype(float)
             panels += [(f"{f} ellipse", el[i] if el[i].sum() > 0 else None) for i, f in enumerate(FINDINGS)]
         fig, axes = plt.subplots(1, len(panels), figsize=(3 * len(panels), 3.3))
@@ -205,7 +220,7 @@ def save_qc(index: pd.DataFrame, imgs: pd.DataFrame, win: float) -> None:
             ax.set_title(title if hm is not None else title + " (none)", fontsize=8)
             ax.axis("off")
         fig.suptitle(f"{r.datasets} {r.dicom_id[:12]}", fontsize=9)
-        fig.savefig(qc / f"fs_{k}_{r.datasets}.png", dpi=80, bbox_inches="tight")
+        fig.savefig(qc / f"{PREFIX}_{k}_{r.datasets}.png", dpi=80, bbox_inches="tight")
         plt.close(fig)
 
 
@@ -217,15 +232,30 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용")
     ap.add_argument("--edema-set", choices=list(EDEMA_SETS), default="v1")
+    ap.add_argument("--finding-set", choices=["base", "more"], default="base", help="25절: more = 무기폐·경화")
     args = ap.parse_args()
-    ROOTS["edema"] = EDEMA_SETS[args.edema_set]
-    print(f"폐부종 단어 세트 {args.edema_set}: {ROOTS['edema']}")
+    global FINDINGS, ROOTS, PREFIX
+    more = args.finding_set == "more"
+    if more:
+        FINDINGS, ROOTS, PREFIX = list(MORE_FINDINGS), dict(MORE_ROOTS), "fs2"
+        if args.main_window not in args.windows:
+            raise SystemExit(f"--finding-set more: --windows에 주 창 {args.main_window:g}초가 있어야 합니다 (예: --windows 3)")
+        print(f"25절 소견 확장: {FINDINGS}, 단어 어근 {ROOTS}, 창 {args.windows}")
+    else:
+        ROOTS["edema"] = EDEMA_SETS[args.edema_set]
+        print(f"폐부종 단어 세트 {args.edema_set}: {ROOTS['edema']}")
 
     reads = pd.read_csv(PROC / "cohort_readings.csv")
     split = pd.read_csv(PROC / f"split_seed{args.seed}.csv")[["dicom_id", "split"]]
     imgs = pd.read_csv(PROC / "cohort_images.csv").merge(split, on="dicom_id")
-    lab = pd.read_csv(PROC / "cohort_images_labeled.csv")[["dicom_id"] + [f"{f}_t3" for f in FINDINGS]]
-    target = imgs[imgs.split.isin(["train", "val"])].reset_index(drop=True)
+    lab_file = PROC / ("more_labels.csv" if more else "cohort_images_labeled.csv")
+    if not lab_file.exists():
+        raise SystemExit(f"label 파일이 없습니다: {lab_file} (먼저 python build_more_labels.py)")
+    lab = pd.read_csv(lab_file)[["dicom_id"] + [f"{f}_t3" for f in FINDINGS]]
+    target = imgs[imgs.split.isin(["train", "val"])]
+    if more:  # 이 소견 label은 REFLACX에만 있음
+        target = target[target.dicom_id.isin(lab.dicom_id)]
+    target = target.reset_index(drop=True)
     if args.max_images:
         target = target.head(args.max_images)
     usable = reads[reads.gaze_ok & reads.dicom_id.isin(target.dicom_id)]
@@ -233,7 +263,7 @@ def main() -> None:
     egd_file = reads.loc[reads.dataset == "egd", "gaze_file"].iloc[0]
     egd_groups = pd.read_csv(egd_file, usecols=["DICOM_ID", "X_ORIGINAL", "Y_ORIGINAL", "FPOGS", "FPOGD"]).groupby("DICOM_ID")
 
-    dirs = {w: PROC / f"heatmaps_fs_w{w:g}_{OUT_SIZE}" for w in args.windows}
+    dirs = {w: PROC / f"heatmaps_{PREFIX}_w{w:g}_{OUT_SIZE}" for w in args.windows}
     for d in dirs.values():
         d.mkdir(parents=True, exist_ok=True)
     ell_dir = PROC / f"heatmaps_ellipse_{OUT_SIZE}"
@@ -260,7 +290,7 @@ def main() -> None:
                         mrow[f"{f}_mentions"] = len(wins)
                         mrow[f"{f}_fix_in_window"] = int((dwell > 0).sum())
                 per_win[win].append(maps)
-            if r.dataset == "reflacx":
+            if r.dataset == "reflacx" and not more:
                 p = Path(r.gaze_file).parent / "anomaly_location_ellipses.csv"
                 ell = pd.read_csv(p) if p.exists() else pd.DataFrame()
                 ell_maps.append([ellipse_map(ell, f, w, h) for f in FINDINGS])
@@ -268,13 +298,13 @@ def main() -> None:
 
         row = {"dicom_id": img.dicom_id, "subject_id": img.subject_id, "split": img.split, "datasets": img.datasets}
         for win in args.windows:
-            m, has = stack_mean(per_win[win]) if per_win[win] else (None, np.zeros(3, bool))
+            m, has = stack_mean(per_win[win]) if per_win[win] else (None, np.zeros(len(FINDINGS), bool))
             if has.any():
                 np.save(dirs[win] / f"{img.dicom_id}.npy", m.astype(np.float16))
             for k, f in enumerate(FINDINGS):
                 row[f"fs{win:g}_{f}"] = bool(has[k])
-        m, has = stack_mean(ell_maps) if ell_maps else (None, np.zeros(3, bool))
-        if has.any():
+        m, has = stack_mean(ell_maps) if ell_maps else (None, np.zeros(len(FINDINGS), bool))
+        if has.any() and not more:
             np.save(ell_dir / f"{img.dicom_id}.npy", m.astype(np.float16))
         for k, f in enumerate(FINDINGS):
             row[f"ellipse_{f}"] = bool(has[k])
@@ -284,11 +314,12 @@ def main() -> None:
             print(f"  {i}/{len(target)}장 처리", flush=True)
 
     index = pd.DataFrame(img_rows).merge(lab, on="dicom_id", how="left")
-    index.to_csv(PROC / "fs_heatmap_index.csv", index=False)
-    json.dump({"edema_set": args.edema_set, "roots": ROOTS, "windows": args.windows},
-              open(PROC / "fs_build_config.json", "w"), indent=2)
+    index.to_csv(PROC / f"{PREFIX}_heatmap_index.csv", index=False)
+    json.dump({"finding_set": args.finding_set, "findings": FINDINGS, "edema_set": None if more else args.edema_set,
+               "roots": ROOTS, "windows": args.windows},
+              open(PROC / f"{PREFIX}_build_config.json", "w"), indent=2)
     men = pd.DataFrame(men_rows)
-    men.to_csv(PROC / "fs_mentions.csv", index=False)
+    men.to_csv(PROC / f"{PREFIX}_mentions.csv", index=False)
     save_qc(index, imgs, args.main_window)
 
     # ------------------------------------------------------ 요약
@@ -308,14 +339,15 @@ def main() -> None:
         for win in args.windows:
             c = tr[f"fs{win:g}_{f}"]
             r[f"{win:g}초 전체"], r[f"{win:g}초 양성"], r[f"{win:g}초 음성"] = c.mean(), c[y].mean(), c[~y].mean()
-        e = tr[f"ellipse_{f}"]
-        r["ellipse 전체"], r["ellipse 양성"] = e.mean(), e[y].mean()
+        if not more:
+            e = tr[f"ellipse_{f}"]
+            r["ellipse 전체"], r["ellipse 양성"] = e.mean(), e[y].mean()
         cov.append(r)
     print(pd.DataFrame(cov).round(3).to_string(index=False))
     print("\n데이터셋별 (train, 주 창):")
     print(tr.groupby("datasets")[[f"fs{args.main_window:g}_{f}" for f in FINDINGS]].mean().round(3).to_string())
-    print(f"\n저장: {', '.join(str(d) for d in dirs.values())}\n      {ell_dir}\n      {PROC / 'fs_heatmap_index.csv'}"
-          f"\n      {PROC / 'fs_mentions.csv'}\n      {PROC / 'qc'}/fs_*.png")
+    print(f"\n저장: {', '.join(str(d) for d in dirs.values())}" + ("" if more else f"\n      {ell_dir}")
+          + f"\n      {PROC / f'{PREFIX}_heatmap_index.csv'}\n      {PROC / f'{PREFIX}_mentions.csv'}\n      {PROC / 'qc'}/{PREFIX}_*.png")
 
 
 if __name__ == "__main__":

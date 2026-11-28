@@ -51,5 +51,9 @@
 | [sweep_gazesource.py](sweep_gazesource.py) | 22절: 시선 출처별 학습 (EGD만 / REFLACX만 시선, seed 0~9) |
 | [evaluate_gazesource.py](evaluate_gazesource.py) | 22절 평가: 출처별 시선 효과(R1), 같은 비율 무작위 시선과 비교(R2) |
 | [count_more_findings.py](count_more_findings.py) | 24절: 소견 확장 후보의 내부 양성 수·시선 단어 coverage·외부 양성 수 |
+| [build_more_labels.py](build_more_labels.py) | 25절: 무기폐·경화 내부 label·셔플 매핑·외부 labels_more (양성 ≥ 30만) |
+| [sweep_more.py](sweep_more.py) | 25절: more_c1·more_hyb_none·more_fs·more_fs_shuffled 학습 (seed 0~9, `train.py --finding-set more`) |
+| [monitor_more.py](monitor_more.py) | 25절: 학습·예측·평가 진행 상황을 1분마다 한 줄로 |
+| [run_more.sh](run_more.sh) | 25절 전체 실행: CPU 준비 → 다른 GPU 작업 끝나기 대기 → 학습 → 예측 → 평가 (로그 results/logs/more_*.txt) |
 
 분석 계획: [../ANALYSIS_PLAN.md](../ANALYSIS_PLAN.md) (test 평가 전 고정)

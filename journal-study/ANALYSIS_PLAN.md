@@ -827,6 +827,49 @@ train 영상 중 출처 비율: EGD 30.2%, REFLACX 69.6%
 - 후보가 정해지면 학습(c1_none·fs·fs_shuffled, 확장 소견별 시선 지도)·평가 계획을 별도로 고정 (GPU는 23절이 끝난 뒤)
 - 참고: phase 1(5명 판독 109장, 모두 test)은 label 이름이 달라(Nodule·Mass 분리 등) 일부 소견 test 양성이 적게 셀 수 있음
 
+### 24절 결과 (2026-11-28, count_more_findings.py, 학습·예측 결과 없음)
+
+| 소견 | train 양성 | val 양성 | test 양성 | 양성 coverage | 외부 양성 ≥ 50 병원 | 판단 |
+|---|---|---|---|---|---|---|
+| 무기폐 (atelectasis) | 449 | 92 | 139 | 0.924 | CheXpert(test 158·val 75), VinDr(test 86), PadChest(a 684·b 747) | 확장 후보 |
+| 경화 (consolidation) | 450 | 96 | 131 | 0.884 | VinDr(test 96), PadChest(a 118·b 114) (CheXpert 29·32) | 확장 후보 |
+| 결절·종괴 (nodule_mass) | 93 | 18 | 19 | 0.925 | VinDr, PadChest | 제외 (내부 양성 부족) |
+| 기흉 (pneumothorax) | 48 | 9 | 21 | 0.792 | 없음 | 제외 |
+| 폐기종 (emphysema) | 55 | 6 | 11 | 0.327 | PadChest | 제외 |
+| 간질성 폐질환 (interstitial) | 16 | 5 | 5 | 0.500 | VinDr, PadChest | 제외 (내부 양성 부족) |
+| 간유리 음영 (groundglass) | 220 | 45 | 59 | 0.718 | 없음 (PadChest 29·45, 나머지 label 없음) | 제외 (외부 부족) |
+| 폐문 확대 (hilum) | 29 | 5 | 13 | 0.931 | PadChest | 제외 |
+| 종격동 윤곽 (mediastinum) | 45 | 15 | 8 | 0.733 | CheXpert | 제외 |
+| 급성 골절 (fracture) | 20 | 3 | 4 | 0.900 | PadChest | 제외 |
+
+- 25절 평가에서 양성 < 30이라 빠지는 외부 데이터: 무기폐 VinDr train(10)·새 train(14), 경화 CheXpert test(29)·VinDr train(26)·새 train(27)
+  → 무기폐 외부 5곳(CheXpert 2, VinDr test, PadChest 2), 경화 외부 4곳(CheXpert val, VinDr test, PadChest 2)
+
+## 25. 소견 확장 — 학습·평가 (약점 ③, 2026-11-28, 학습 전에 고정. scripts/build_more_labels.py, sweep_more.py)
+
+- 목적: 시선 효과가 흉막·심장비대·폐부종 3개에만 있는 것인지, 다른 소견(무기폐·경화)에서도 나타나는지 확인
+- 데이터: REFLACX 영상만 (EGD 영상에는 이 소견 label이 없음). split은 기존 split_seed42 그대로
+  - label: 판독의 확신도 ≥ 3이면 양성, 판독이 여러 명이면 과반수 (24절과 같은 규칙) → more_labels.csv
+  - 시선 지도: 소견별 시선 지도와 같은 방법 (단어 시작 3초 전 ~ 말 끝, Gaussian σ 7, 합 1). 단어 어근 atelecta, consolid (24절 coverage와 같음)
+    → heatmaps_fs2_w3_128 (2채널, 기존 파일과 따로 저장)
+  - fs_shuffled 매핑: 이 코호트의 train 영상끼리 다른 환자에게서 일대일 (shuffle_map_more_seed42.csv)
+- 조건 (seed 0~9, 새 조정 없음. lr 1e-4, cosine, 20 epoch, patience 5, 512, DenseNet-121 ImageNet)
+  - more_c1 (avg, 시선 없음) / more_hyb_none (hybrid3, 시선 없음) / more_fs (hybrid3, 소견별 시선, λ 0.3) / more_fs_shuffled (λ 0.3)
+- 평가 데이터: 내부 REFLACX test와 외부 7곳 (CheXpert test·val, VinDr test·train·새 train, PadChest a·b)
+  - 외부 label: CheXpert = 전문의 label(정면), VinDr test = 합의 label, VinDr train = 3명 과반수, PadChest = 판독문 label 집합
+    (무기폐: atelectasis·laminar·lobar·segmental·round·total atelectasis, 경화: consolidation)
+  - 데이터·소견별 양성 ≥ 30인 경우만 평가 (label만 보고 결정, 예측 전). 30 미만은 개수만 보고
+- 지표: AUROC (주), 자동 문턱 missed (보조). 신뢰구간 ci2 (환자·영상 + seed bootstrap 2,000회)
+- 가설 (외부 통합(전체) DerSimonian–Laird, 내부 test는 따로 보고)
+  - E1 (주): more_fs − more_c1 AUROC > 0
+  - E2 (주): more_fs − more_fs_shuffled AUROC > 0
+  - 보조: more_fs − more_hyb_none
+  - 다중 비교: 주 비교 4개(E1·E2 × 무기폐·경화)에 Holm 보정, 보정 p < 0.05이고 fs가 더 좋으면 "유지"
+- 해석 규칙: 한 소견이라도 E1·E2가 Holm 후 유지 → "시선 효과가 다른 소견으로 일반화됨"
+  둘 다 유지되지 않으면 결과 그대로 한계로 보고 (소견에 따라 효과가 다름). 설정을 바꿔 다시 돌리지 않음
+- 순서: CPU(label·시선 지도, 바로 가능) → GPU 학습(23절 ConvNeXt 끝난 뒤 자동 시작) → 예측 → 평가
+- 위치 평가(CheXlocalize에 무기폐·경화 분할 있음)는 판별력 결과를 본 뒤 별도로 고정
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)

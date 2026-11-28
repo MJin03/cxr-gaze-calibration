@@ -63,6 +63,14 @@ def _choice_conditions(name):
 
 NIH_CONDITIONS = _choice_conditions("nih_choice.json")
 CNX_CONDITIONS = _choice_conditions("cnx_choice.json")   # 23절: ConvNeXt-Tiny
+# 25절: 소견 확장 (무기폐·경화, REFLACX 영상만, train.py --finding-set more). 설정은 기존 fs·c1과 같음 (새 조정 없음)
+MORE_FINDINGS = ["atelectasis", "consolidation"]
+MORE_CONDITIONS = {
+    "more_fs":          ("fs", f"{HYB}_lam0.3_more"),
+    "more_c1":          ("none", f"{AVG}_lam0_more"),
+    "more_hyb_none":    ("none", f"{HYB}_lam0_more"),
+    "more_fs_shuffled": ("fs-shuffled", f"{HYB}_lam0.3_more"),
+}
 # 12절: 판별력 외부 검증 확장 (9절과 같은 조건·비교, 결과 보기 전에 고정)
 DISC_CONDS = ["fs", "c1_none", "fs_shuffled", "real_global", "hyb_none", "ellipse"]
 DISC_COMPARISONS = [
@@ -118,6 +126,30 @@ DATASETS = {
 
 
 
+# 25절 평가 데이터: 이름 → (영상 폴더, label 파일). 평가 소견 = label 파일에 열이 있는 소견 (양성 ≥ 30, build_more_labels.py)
+# internal_test_more = 내부 REFLACX test (예측은 학습 때 저장한 preds_test.csv를 그대로 옮김)
+def _more_findings(path):
+    import csv
+    if not path.exists():
+        return {}
+    with open(path) as fh:
+        cols = next(csv.reader(fh))
+    return {f: f for f in MORE_FINDINGS if f in cols}
+
+
+for _k, (_img, _lab) in {
+        "internal_test_more": (PROC / "more_internal_test", PROC / "more_internal_test/labels.csv"),
+        "chexpert_test_more": (PROC / "chexpert_test", PROC / "chexpert_test/labels_more.csv"),
+        "chexpert_valid_more": (PROC / "chexpert_valid", PROC / "chexpert_valid/labels_more.csv"),
+        "vindr_test_more": (PROC / "vindr_test", PROC / "vindr_test/labels_more.csv"),
+        "vindr_train_more": (PROC / "vindr_train3000", PROC / "vindr_train3000/labels_more.csv"),
+        "vindr_train_b_more": (PROC / "vindr_train3000b", PROC / "vindr_train3000b/labels_more.csv"),
+        "padchest_a_more": (PROC / "padchest", PROC / "padchest/labels_more_a.csv"),
+        "padchest_b_more": (PROC / "padchest", PROC / "padchest/labels_more_b.csv")}.items():
+    DATASETS[_k] = dict(img=_img, labels=_lab, findings=_more_findings(_lab), internal=_k.startswith("internal"))
+MORE_EXTERNAL = [k for k in DATASETS if k.endswith("_more") and not k.startswith("internal")]
+
+
 def train_prevalence():
     """내부 train 양성 비율 (C의 EM 시작값). 모델 출력 이름 → 비율."""
     import pandas as pd
@@ -131,5 +163,6 @@ _TEST_SUFFIX = os.environ.get("VINDR_TEST_SUFFIX", "")  # 동작 확인용 (실�
 
 
 def run_dir(cond: str, seed: int) -> Path:
-    gaze, tag = {**CONDITIONS, **ORD_CONDITIONS, **GF_CONDITIONS, **NIH_CONDITIONS, **SRC_CONDITIONS, **CNX_CONDITIONS}[cond]
+    gaze, tag = {**CONDITIONS, **ORD_CONDITIONS, **GF_CONDITIONS, **NIH_CONDITIONS, **SRC_CONDITIONS, **CNX_CONDITIONS,
+                 **MORE_CONDITIONS}[cond]
     return RUNS / f"findings_gaze-{gaze}_t3_seed{seed}_{tag}{_TEST_SUFFIX}"

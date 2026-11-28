@@ -62,6 +62,11 @@ C3 옵션 (2026-11-18 추가, ANALYSIS_PLAN.md 8절 C3)
     --gaze-source all|egd|reflacx   egd = EGD-CXR(판독의 1명)만 시선, reflacx = REFLACX(판독의 5명)만 시선.
                                     두 데이터에 모두 있는 영상(egd+reflacx)은 egd·reflacx 조건에서 시선 제외. label은 모든 영상 그대로
 
+25절 옵션 (2026-11-28 추가): 소견 확장
+    --finding-set more   소견 = atelectasis, consolidation (REFLACX 영상만, label = more_labels.csv의 {소견}_t3)
+                         fs 지도 = heatmaps_fs2_w{W}_128 (2채널), fs-shuffled 매핑 = shuffle_map_more_seed{split}.csv
+                         threshold 3만. smoothing·난이도 헤드·순서형·gaze-frac·gaze-source와 함께 쓰지 않음
+
 모델
     DenseNet-121 → 마지막 feature map (1024×16×16)
       ├ global average pooling → linear → 분류 logit
@@ -102,6 +107,8 @@ HOME = Path.home() / "X-ray"
 PROC = HOME / "data/processed"
 PREV_SPLIT = HOME / "archive/kim_mj_sens_X-ray/gaze_calibration_research/splits/egd_cxr_cohort_with_split_seed42.csv"
 FINDINGS = ["pleural", "cardiac", "edema"]
+MORE_FINDINGS = ["atelectasis", "consolidation"]   # 25절 --finding-set more
+FINDING_SET = "base"
 CLASS3 = ["Normal", "CHF", "pneumonia"]
 MEAN, STD = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
 
@@ -116,6 +123,9 @@ def find_col(df: pd.DataFrame, candidates: list, what: str) -> str:
 
 def build_table(args) -> tuple:
     lab = pd.read_csv(PROC / "cohort_images_labeled.csv")
+    if FINDING_SET == "more":  # 25절: REFLACX 영상만 (이 소견 label이 있는 영상)
+        more = pd.read_csv(PROC / "more_labels.csv")[["dicom_id"] + [f"{f}_t3" for f in MORE_FINDINGS]]
+        lab = lab.drop(columns=[c for c in more.columns if c != "dicom_id" and c in lab.columns]).merge(more, on="dicom_id")
     if args.task == "findings":
         split = pd.read_csv(PROC / f"split_seed{args.split_seed}.csv")[["dicom_id", "split"]]
         df = lab.merge(split, on="dicom_id")
@@ -205,13 +215,17 @@ def add_smoothing(df: pd.DataFrame, args) -> None:
         df.loc[train, f"eps_{f}"] = args.smooth_max * diff.loc[train, f].clip(0, 1)
 
 
+def shuffle_file(args) -> Path:
+    return PROC / (f"shuffle_map_more_seed{args.split_seed}.csv" if FINDING_SET == "more" else f"shuffle_map_seed{args.split_seed}.csv")
+
+
 def gaze_source(df: pd.DataFrame, args) -> pd.Series:
     """영상별로 쓸 heatmap 파일의 dicom_id (없으면 NaN)."""
     if args.gaze == "none":
         return pd.Series(np.nan, index=df.index)
     src = df["dicom_id"].where(df["split"] == "train")
     if args.gaze in ("shuffled", "fs-shuffled"):
-        smap = pd.read_csv(PROC / f"shuffle_map_seed{args.split_seed}.csv").set_index("dicom_id")["donor_dicom_id"]
+        smap = pd.read_csv(shuffle_file(args)).set_index("dicom_id")["donor_dicom_id"]
         src = src.map(smap)
     gsrc = getattr(args, "gaze_source", "all")
     if gsrc != "all":  # 22절: 한 출처(판독의 집단)의 시선만
@@ -232,6 +246,7 @@ class CXRDataset(Dataset):
     def __init__(self, df, targets, task, img_dir, hm_dir, train, img_size, n_maps=1, repeat_global=False, ordinal=False):
         self.df, self.targets, self.task = df.reset_index(drop=True), targets, task
         self.ord = ord_cols() if ordinal else []
+        self.eps_cols = [f"eps_{f}" for f in FINDINGS]  # 25절: 소견 목록을 여기서 고정 (worker 시작 방식과 무관)
         self.img_dir, self.hm_dir, self.train, self.size = img_dir, hm_dir, train, img_size
         self.n_maps, self.repeat_global = n_maps, repeat_global
         self.res = img_size if n_maps == 1 else self.MULTI_RES
@@ -276,7 +291,7 @@ class CXRDataset(Dataset):
         if self.task == "findings":
             y = torch.tensor([float(r[t]) for t in self.targets])
             if self.train:  # 난이도 가중 label smoothing (eps가 0이면 원래 label 그대로)
-                eps = torch.tensor([float(r[f"eps_{f}"]) for f in FINDINGS])
+                eps = torch.tensor([float(r[c]) for c in self.eps_cols])
                 y = y * (1 - eps) + eps / 2
             if self.ord:  # 순서형: 뒤에 ≥4·≥5 label (NaN = 제외)
                 y = torch.cat([y, torch.tensor([float(r[c]) for c in self.ord])])
@@ -491,6 +506,7 @@ def main() -> None:
     ap.add_argument("--gaze-source", choices=["all", "egd", "reflacx"], default="all", help="22절: 시선 출처")
     ap.add_argument("--ordinal", action="store_true", help="16절: 확신도 ≥3·≥4·≥5 순서형 출력")
     ap.add_argument("--ordinal-weight", type=float, default=1.0)
+    ap.add_argument("--finding-set", choices=["base", "more"], default="base", help="25절: more = 무기폐·경화 (REFLACX 영상만)")
     ap.add_argument("--tag", default="")
     ap.add_argument("--max-images", type=int, default=0, help="동작 확인용: 세트마다 앞에서 N장만")
     ap.add_argument("--run-name", default="")
@@ -506,6 +522,12 @@ def main() -> None:
         raise SystemExit("attn3/hybrid3는 --task findings 에서만 씁니다.")
     if args.ordinal and (args.task != "findings" or args.diff_target != "none" or args.pool not in ("avg", "hybrid3")):
         raise SystemExit("--ordinal은 findings, pool avg/hybrid3, diff-target none에서만 씁니다.")
+    global FINDINGS, FINDING_SET
+    if args.finding_set == "more":
+        if (args.task != "findings" or args.threshold != 3 or args.ordinal or args.smooth != "none" or args.diff_target != "none"
+                or args.gaze_frac < 1.0 or args.gaze_source != "all" or args.gaze not in ("none", "fs", "fs-shuffled")):
+            raise SystemExit("--finding-set more는 findings, threshold 3, gaze none/fs/fs-shuffled에서만 씁니다 (다른 옵션 없이).")
+        FINDINGS, FINDING_SET = list(MORE_FINDINGS), "more"
 
     name = args.run_name or (f"{args.task}_gaze-{args.gaze}_t{args.threshold}_seed{args.seed}"
                              + (f"_{args.tag}" if args.tag else ""))
@@ -523,7 +545,8 @@ def main() -> None:
     df["gaze_src"] = gaze_source(df, args)
     names = FINDINGS if args.task == "findings" else CLASS3
     img_dir = PROC / f"images_{args.img_size}"
-    hm_dir = (PROC / f"heatmaps_fs_w{args.fs_window:g}_128" if args.gaze in ("fs", "fs-shuffled")
+    fs_name = "fs2" if FINDING_SET == "more" else "fs"
+    hm_dir = (PROC / f"heatmaps_{fs_name}_w{args.fs_window:g}_128" if args.gaze in ("fs", "fs-shuffled")
               else PROC / "heatmaps_ellipse_128" if args.gaze == "ellipse" else PROC / "heatmaps_512_s7")
     n_maps = len(FINDINGS) if multi else 1
     repeat_global = multi and args.gaze in ("real", "shuffled")
