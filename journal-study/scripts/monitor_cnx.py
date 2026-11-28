@@ -52,16 +52,14 @@ def main():
         runs = [cal_common.run_dir(c, s) for c in cnx for s in cal_common.S10]
         preds = [d / f"preds_{ds}.csv" for d in runs for ds in DS7]
         pr = sorted(p.stat().st_mtime for p in preds if p.exists())
-        pooled = cal_common.RESULTS / "eval_disc_cnx/pooled.csv"
-        loc = cal_common.RESULTS / "localization/summary.csv"
         if len(tr) < N_TRAIN or not cnx:
             msg = f"단계 1/4 학습 | {len(tr)}/{N_TRAIN} | 남은 {eta(tr, len(tr), N_TRAIN)} | 마지막: {last_line(LOGS / 'cnx_pred.txt')}"
         elif len(pr) < len(preds):
             msg = (f"단계 2/4 외부 7곳 예측 | {len(pr)}/{len(preds)} | 남은 {eta(pr, len(pr), len(preds))}"
                    f" | 마지막: {last_line(LOGS / 'cnx_pred.txt')}")
-        elif not pooled.exists() or pooled.stat().st_mtime < pr[-1]:
+        elif not (LOGS / "cnx_loc.txt").exists():   # run_cnx.sh가 평가를 마친 뒤에야 이 로그를 만듦
             msg = f"단계 3/4 판별력 평가 (약 30~40분) | 마지막: {last_line(LOGS / 'cnx_eval.txt')}"
-        elif not loc.exists() or loc.stat().st_mtime < pooled.stat().st_mtime:
+        elif "ConvNeXt 모두 끝" not in (LOGS / "cnx_loc.txt").read_text(errors="ignore"):
             msg = f"단계 4/4 위치 평가 (약 20~30분) | 마지막: {last_line(LOGS / 'cnx_loc.txt')}"
         else:
             print(f"[{datetime.now():%H:%M}] 모두 끝 → logs/cnx_eval.txt, logs/cnx_loc.txt 보내 주세요", flush=True)
