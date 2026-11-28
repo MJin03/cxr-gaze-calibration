@@ -2,7 +2,8 @@
 # 25절 전체 실행 (ANALYSIS_PLAN.md 25절): CPU 준비 → 다른 GPU 작업(23절 ConvNeXt 등) 끝나기 대기 → 학습 → 예측 → 평가
 # 로그: ~/X-ray/results/logs/more_labels.txt, more_maps.txt, more_train.txt, more_pred.txt, more_eval.txt
 # 진행 확인: python monitor_more.py (다른 tmux 창에서)
-# 사용법  bash run_more.sh
+# 사용법  bash run_more.sh                 (다른 GPU 작업이 끝나면 시작)
+#         MORE_NO_WAIT=1 bash run_more.sh  (기다리지 않고 동시에)
 set -euo pipefail
 cd "$(dirname "$0")"
 L="$HOME/X-ray/results/logs"
@@ -22,12 +23,16 @@ else
   echo "label·시선 지도 이미 있음 → 건너뜀"
 fi
 
-echo "[$(date +%H:%M)] 다른 GPU 작업(ConvNeXt 등) 끝나기 대기 (2분 연속 없으면 시작)" | tee "$L/more_train.txt"
-n=0
-while [ "$n" -lt 2 ]; do
-  if pgrep -f "sweep_nih.py|sweep_gazesource.py|sweep_gazefrac.py|predict_external.py|evaluate_localization.py" > /dev/null; then n=0; else n=$((n + 1)); fi
-  sleep "${MORE_WAIT_SEC:-60}"
-done
+if [ -n "${MORE_NO_WAIT:-}" ]; then  # MORE_NO_WAIT=1 bash run_more.sh → 다른 GPU 작업과 동시에 (GPU 메모리가 충분할 때)
+  echo "[$(date +%H:%M)] 대기 없이 바로 시작 (다른 GPU 작업과 동시 실행)" | tee "$L/more_train.txt"
+else
+  echo "[$(date +%H:%M)] 다른 GPU 작업(ConvNeXt 등) 끝나기 대기 (2분 연속 없으면 시작)" | tee "$L/more_train.txt"
+  n=0
+  while [ "$n" -lt 2 ]; do
+    if pgrep -f "sweep_nih.py|sweep_gazesource.py|sweep_gazefrac.py|predict_external.py|evaluate_localization.py" > /dev/null; then n=0; else n=$((n + 1)); fi
+    sleep "${MORE_WAIT_SEC:-60}"
+  done
+fi
 
 echo "[$(date +%H:%M)] 3) 학습 시작" | tee -a "$L/more_train.txt"
 python sweep_more.py run --seeds $SEEDS --extra "$EXTRA" 2>&1 | tee -a "$L/more_train.txt"
