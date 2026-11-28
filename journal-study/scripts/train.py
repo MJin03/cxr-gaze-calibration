@@ -11,7 +11,8 @@ Baseline과 gaze 모델이 완전히 같은 코드로 돌도록 --gaze 옵션 �
     --task class3    이전 연구 재현용 EGD 3분류 (정상/CHF/폐렴), 이전 연구 split 사용, gaze none만
 
 개선 옵션 (2026-11-17 추가)
-    --backbone imagenet|chexpert|nih   nih = torchxrayvision densenet121-res224-nih (NIH ChestX-ray14로만 사전학습, 19절 강한 모델.
+    --backbone imagenet|chexpert|nih|convnext_t   convnext_t = torchvision ConvNeXt-Tiny ImageNet-1K (23절 강한 모델, 512 입력)
+                                   nih = torchxrayvision densenet121-res224-nih (NIH ChestX-ray14로만 사전학습, 19절 강한 모델.
                                    외부 평가 7곳과 MIMIC 미포함). chexpert와 같은 1채널·정규화
                                    chexpert = torchxrayvision densenet121-res224-chex (CheXpert로만 사전학습,
                                    MIMIC-CXR 미포함 → test 누수 없음). 1채널, [-1024, 1024] 정규화
@@ -295,33 +296,42 @@ class Net(nn.Module):
     def __init__(self, n_out: int, backbone: str, pretrained: bool, pool: str, diff: bool = False, ordinal: bool = False):
         super().__init__()
         self.backbone, self.pool = backbone, pool
+        self.feat_norm = None
         if backbone in ("chexpert", "nih"):
             import torchxrayvision as xrv
             w = {"chexpert": "densenet121-res224-chex", "nih": "densenet121-res224-nih"}[backbone]
             base = xrv.models.DenseNet(weights=w if pretrained else None)
+            C = 1024
+        elif backbone == "convnext_t":  # 23절: ConvNeXt-Tiny (ImageNet-1K), 마지막 특징 768×16×16 (512 입력)
+            from torchvision.models import ConvNeXt_Tiny_Weights, convnext_tiny
+            base = convnext_tiny(weights=ConvNeXt_Tiny_Weights.IMAGENET1K_V1 if pretrained else None)
+            self.feat_norm = base.classifier[0]   # 원래 분류기 앞의 LayerNorm을 특징 지도에 그대로 적용
+            C = 768
         else:
             base = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None)
+            C = 1024
+        self.C = C
         self.features = base.features
         self.multi = pool in ("attn3", "hybrid3")
-        self.head = nn.Linear(1024, n_out)
-        if self.multi:  # finding별 분류기: attn3 = 1024, hybrid3 = 2048 (평균 + attention)
-            d = 2048 if pool == "hybrid3" else 1024
+        self.head = nn.Linear(C, n_out)
+        if self.multi:  # finding별 분류기: attn3 = C, hybrid3 = 2C (평균 + attention)
+            d = 2 * C if pool == "hybrid3" else C
             self.head_w = nn.Parameter(torch.empty(n_out, d))
             self.head_b = nn.Parameter(torch.zeros(n_out))
             nn.init.kaiming_uniform_(self.head_w, a=math.sqrt(5))
         self.diff = diff and pool == "hybrid3"
         if self.diff:  # 난이도 예측 헤드와 logit 축소 강도 β (softplus(−1) ≈ 0.31에서 시작)
-            self.diff_w = nn.Parameter(torch.zeros(n_out, 2048))
+            self.diff_w = nn.Parameter(torch.zeros(n_out, 2 * C))
             self.diff_b = nn.Parameter(torch.zeros(n_out))
             self.beta = nn.Parameter(torch.full((n_out,), -1.0))
         self.last_dlogit = None
         self.ordinal = ordinal
         if ordinal:  # finding별 ≥4, ≥5 간격 헤드 (hybrid3 = finding별 특징 2048, 그 외 = 공통 특징 1024)
-            d = 2048 if pool == "hybrid3" else 1024 if pool in ("attn3", "avg", "attn") else 1024
+            d = 2 * C if pool == "hybrid3" else C
             self.ord_w = nn.Parameter(torch.zeros(n_out, len(ORD_T), d))
             self.ord_b = nn.Parameter(torch.zeros(n_out, len(ORD_T)))
         self.last_ord = None
-        self.gaze_head = nn.Conv2d(1024, n_out if self.multi else 1, kernel_size=1)
+        self.gaze_head = nn.Conv2d(C, n_out if self.multi else 1, kernel_size=1)
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
 
@@ -330,7 +340,7 @@ class Net(nn.Module):
             x = x * 2048 - 1024
         else:
             x = (x.expand(-1, 3, -1, -1) - self.mean) / self.std
-        f = F.relu(self.features(x))
+        f = self.feat_norm(self.features(x)) if self.feat_norm is not None else F.relu(self.features(x))
         att = self.gaze_head(f)
         if self.multi:
             w = torch.softmax(att.flatten(2).float(), dim=-1).to(f.dtype)  # B×K×HW
@@ -412,7 +422,8 @@ def fit_temperature(logits: torch.Tensor, y: torch.Tensor, task: str) -> list:
             loss.backward()
             return loss
         opt.step(closure)
-        return float(log_t.detach().exp())
+        t = float(log_t.detach().exp())
+        return t if math.isfinite(t) and t > 0 else 1.0  # 맞추기 실패(값 발산) 시 보정 없음
     if task == "findings":
         res = []
         for k in range(y.shape[1]):
@@ -469,7 +480,7 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--img-size", type=int, default=512)
     ap.add_argument("--no-pretrained", action="store_true")
-    ap.add_argument("--backbone", choices=["imagenet", "chexpert", "nih"], default="imagenet")
+    ap.add_argument("--backbone", choices=["imagenet", "chexpert", "nih", "convnext_t"], default="imagenet")
     ap.add_argument("--schedule", choices=["constant", "cosine"], default="constant")
     ap.add_argument("--pool", choices=["avg", "attn", "attn3", "hybrid3"], default="avg")
     ap.add_argument("--smooth", choices=["none", "gaze", "gaze-shuffled", "certainty", "uniform"], default="none")

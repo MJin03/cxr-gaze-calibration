@@ -9,8 +9,11 @@
 선택 규칙 (기존과 같음): val NLL(temperature 전 val 분류 loss) seed 평균 최저, 같으면 val AUROC(흉막·심장비대 평균) 높은 쪽
 → results/nih_choice.json 기록 → 선택된 설정으로 seed 0~9 (탐색 때 만든 seed 0~2 재사용)
 
-사용법  python sweep_nih.py all          # 탐색 → 선택 → 최종 (끊겨도 다시 실행하면 이어서)
-        python sweep_nih.py report       # 탐색 결과 표만
+23절 (2026-11-28): --backbone convnext_t 이면 같은 절차를 ConvNeXt-Tiny(ImageNet-1K)로 반복.
+    조건 이름 cnx_c1 / cnx_hyb_none / cnx_fs / cnx_fs_shuffled, 선택 기록 results/cnx_choice.json
+
+사용법  python sweep_nih.py all [--backbone nih|convnext_t]   # 탐색 → 선택 → 최종 (끊겨도 다시 실행하면 이어서)
+        python sweep_nih.py report [--backbone ...]          # 탐색 결과 표만
 """
 import argparse
 import json
@@ -26,15 +29,21 @@ TRAIN = Path(__file__).parent / "train.py"
 LRS = [1e-4, 3e-5]
 LAMS = [0.1, 0.3, 1.0]
 TUNE_SEEDS, FINAL_SEEDS = [0, 1, 2], list(range(10))
-SPEC = {  # 조건 → (gaze, pool, 탐색할 λ 목록)
-    "nih_c1": ("none", "avg", [0.0]),
-    "nih_hyb_none": ("none", "hybrid3", [0.0]),
-    "nih_fs": ("fs", "hybrid3", LAMS),
-}
+BB = {"nih": ("nih", "nih_choice.json"), "convnext_t": ("cnx", "cnx_choice.json")}  # backbone → (조건 접두어, 선택 기록)
+BACKBONE = ["nih"]
+SPEC = {}  # 조건 → (gaze, pool, 탐색할 λ 목록). main()에서 접두어로 채움
+
+
+def set_backbone(bb):
+    BACKBONE[0] = bb
+    p = BB[bb][0]
+    SPEC.clear()
+    SPEC.update({f"{p}_c1": ("none", "avg", [0.0]), f"{p}_hyb_none": ("none", "hybrid3", [0.0]),
+                 f"{p}_fs": ("fs", "hybrid3", LAMS)})
 
 
 def tag(lr, pool, lam):
-    return f"bb-nih_lr{lr:g}_sch-cosine_pool-{pool}_lam{lam:g}"
+    return f"bb-{BACKBONE[0]}_lr{lr:g}_sch-cosine_pool-{pool}_lam{lam:g}"
 
 
 def rdir(gaze, lr, pool, lam, s):
@@ -50,7 +59,7 @@ def train(gaze, lr, pool, lam, s, label):
         print(f"  건너뜀 (이미 있음): {label}", flush=True)
         return
     print(f"\n[{label}] 시작", flush=True)
-    cmd = [sys.executable, str(TRAIN), "--task", "findings", "--gaze", gaze, "--seed", str(s), "--backbone", "nih",
+    cmd = [sys.executable, str(TRAIN), "--task", "findings", "--gaze", gaze, "--seed", str(s), "--backbone", BACKBONE[0],
            "--lr", str(lr), "--schedule", "cosine", "--pool", pool, "--gaze-weight", str(lam), "--tag", tag(lr, pool, lam)] + EXTRA
     if (d / "best.pt").exists():
         cmd.append("--overwrite")
@@ -85,7 +94,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("action", choices=["all", "report"])
     ap.add_argument("--extra", default="", help="동작 확인용 train.py 추가 인자")
+    ap.add_argument("--backbone", choices=list(BB), default="nih")
     args = ap.parse_args()
+    set_backbone(args.backbone)
+    P = BB[args.backbone][0]
     EXTRA.extend(args.extra.split())
     n_tune = sum(len(LRS) * len(l) * len(TUNE_SEEDS) for _, _, l in SPEC.values())
     if args.action == "all":
@@ -113,25 +125,25 @@ def main():
         b = best[c]
         cond_map[c] = [g, tag(b.lr, pool, b.lam)]
         print(f"  선택 {c:14s} lr {b.lr:g}, λ {b.lam:g} → val_nll {b.val_nll:.4f}, score {b.score:.4f}")
-    bf = best["nih_fs"]
-    cond_map["nih_fs_shuffled"] = ["fs-shuffled", tag(bf.lr, "hybrid3", bf.lam)]
-    print(f"  nih_fs_shuffled: nih_fs와 같은 lr {bf.lr:g}, λ {bf.lam:g}")
+    bf = best[f"{P}_fs"]
+    cond_map[f"{P}_fs_shuffled"] = ["fs-shuffled", tag(bf.lr, "hybrid3", bf.lam)]
+    print(f"  {P}_fs_shuffled: {P}_fs와 같은 lr {bf.lr:g}, λ {bf.lam:g}")
     if args.action == "report":
         return
     json.dump({"rule": "val NLL seed 0~2 평균 최저, 같으면 score", "conditions": cond_map,
                "choice": {c: {"lr": float(best[c].lr), "lam": float(best[c].lam)} for c in SPEC}},
-              open(RESULTS / "nih_choice.json", "w"), indent=2, ensure_ascii=False)
-    print(f"  기록: {RESULTS / 'nih_choice.json'}")
+              open(RESULTS / BB[args.backbone][1], "w"), indent=2, ensure_ascii=False)
+    print(f"  기록: {RESULTS / BB[args.backbone][1]}")
 
     print("\n=== 2/2 최종 학습 (seed 0~9, 탐색 때 만든 seed 0~2는 재사용)", flush=True)
-    finals = [(c, s) for c in ["nih_c1", "nih_hyb_none", "nih_fs", "nih_fs_shuffled"] for s in FINAL_SEEDS]
+    finals = [(c, s) for c in [f"{P}_c1", f"{P}_hyb_none", f"{P}_fs", f"{P}_fs_shuffled"] for s in FINAL_SEEDS]
     for k, (c, s) in enumerate(finals, 1):
         g, t = cond_map[c]
         pool = "avg" if "pool-avg" in t else "hybrid3"
         lr = float(t.split("_lr")[1].split("_")[0])
         lam = float(t.split("_lam")[1])
         train(g, lr, pool, lam, s, f"최종 {k}/{len(finals)} {c} seed {s}")
-    print("\n최종 학습 끝. 다음: 외부 예측 (predict_external.py --conds nih_c1 nih_hyb_none nih_fs nih_fs_shuffled)")
+    print(f"\n최종 학습 끝. 다음: 외부 예측 (predict_external.py --conds {P}_c1 {P}_hyb_none {P}_fs {P}_fs_shuffled)")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,11 @@ COND_SETS = {
             [("nih_fs", "nih_c1", "primary"), ("nih_fs", "nih_fs_shuffled", "primary"),
              ("nih_fs", "nih_hyb_none", "secondary"),
              ("nih_c1", "c1_none", "strength"), ("nih_fs", "fs", "strength")]),
+    # 23절: 강한 모델(ConvNeXt-Tiny). strength = 강한 모델 확인(S0), cnx_fs − fs = 강한 모델 + 시선이 기존 최선보다 나은지
+    "cnx": (["cnx_fs", "cnx_c1", "cnx_fs_shuffled", "cnx_hyb_none", "fs", "c1_none"],
+            [("cnx_fs", "cnx_c1", "primary"), ("cnx_fs", "cnx_fs_shuffled", "primary"),
+             ("cnx_fs", "cnx_hyb_none", "secondary"),
+             ("cnx_c1", "c1_none", "strength"), ("cnx_fs", "fs", "strength")]),
 }
 from evaluate_calibration import AUC, sig
 from evaluate_rolling import metrics as roll_metrics

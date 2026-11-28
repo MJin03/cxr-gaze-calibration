@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from cal_common import DATASETS, NIH_CONDITIONS, PROC, RESULTS, S10, run_dir
+from cal_common import CNX_CONDITIONS, DATASETS, NIH_CONDITIONS, PROC, RESULTS, S10, run_dir
 
 RAW = PROC.parent / "raw/chexlocalize/chexlocalize/CheXlocalize"
 OUT = RESULTS / "localization"
@@ -35,7 +35,8 @@ TASK = {"pleural": "Pleural Effusion", "cardiac": "Cardiomegaly", "edema": "Edem
 LABEL_COL = {"pleural": "pleural_effusion", "cardiac": "cardiac", "edema": "edema"}  # CheXlocalize 흉막 분할은 흉수
 BASE_CONDS = ["fs", "hyb_none", "fs_shuffled", "real_global", "ellipse"]
 COMPS = [("fs", "hyb_none", "primary"), ("fs", "fs_shuffled", "primary"), ("fs", "real_global", "secondary"),
-         ("fs", "ellipse", "secondary"), ("nih_fs", "nih_hyb_none", "secondary"), ("nih_fs", "nih_fs_shuffled", "secondary")]
+         ("fs", "ellipse", "secondary"), ("nih_fs", "nih_hyb_none", "secondary"), ("nih_fs", "nih_fs_shuffled", "secondary"),
+         ("cnx_fs", "cnx_hyb_none", "secondary"), ("cnx_fs", "cnx_fs_shuffled", "secondary")]
 TAUS = np.round(np.arange(0.05, 0.96, 0.05), 2)
 
 
@@ -140,7 +141,8 @@ def vindr_items():
 
 
 def conds_available(ds):
-    cs = BASE_CONDS + [c for c in ["nih_fs", "nih_hyb_none", "nih_fs_shuffled"] if c in NIH_CONDITIONS]
+    cs = BASE_CONDS + [c for c in ["nih_fs", "nih_hyb_none", "nih_fs_shuffled"] if c in NIH_CONDITIONS] \
+        + [c for c in ["cnx_fs", "cnx_hyb_none", "cnx_fs_shuffled"] if c in CNX_CONDITIONS]
     return {c: [s for s in S10 if (run_dir(c, s) / f"att_{ds}.npy").exists()] for c in cs}
 
 
