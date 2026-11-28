@@ -38,7 +38,8 @@ def internal():
     reads = pd.read_csv(PROC / "cohort_readings.csv")
     sp = pd.read_csv(PROC / "split_seed42.csv")
     meta = pd.concat([pd.read_csv(f) for f in sorted(glob.glob(str(RAW / "reflacx/main_data/metadata_phase_*.csv")))])
-    ref = reads[reads.dataset == "reflacx"].merge(meta.drop(columns=["dicom_id", "subject_id"], errors="ignore"),
+    # REFLACX 자체 split 열은 우리 split과 겹치지 않게 제거
+    ref = reads[reads.dataset == "reflacx"].merge(meta.drop(columns=["dicom_id", "subject_id", "split"], errors="ignore"),
                                                   left_on="reading_id", right_on="id", how="left").merge(sp, on="dicom_id")
     return ref
 
