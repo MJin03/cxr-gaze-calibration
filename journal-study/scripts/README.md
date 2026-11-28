@@ -50,5 +50,6 @@
 | [evaluate_clinical.py](evaluate_clinical.py) | 21절: 특이도 90%의 민감도·놓친 환자 수/1,000명, 주 비교 Holm 보정 |
 | [sweep_gazesource.py](sweep_gazesource.py) | 22절: 시선 출처별 학습 (EGD만 / REFLACX만 시선, seed 0~9) |
 | [evaluate_gazesource.py](evaluate_gazesource.py) | 22절 평가: 출처별 시선 효과(R1), 같은 비율 무작위 시선과 비교(R2) |
+| [count_more_findings.py](count_more_findings.py) | 24절: 소견 확장 후보의 내부 양성 수·시선 단어 coverage·외부 양성 수 |
 
 분석 계획: [../ANALYSIS_PLAN.md](../ANALYSIS_PLAN.md) (test 평가 전 고정)

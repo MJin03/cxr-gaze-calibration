@@ -816,6 +816,17 @@ train 영상 중 출처 비율: EGD 30.2%, REFLACX 69.6%
 - S0 불충족이면 그대로 보고하고 NIH 직접 사전학습(B안)을 별도로 고정해 검토
 - 부수 수정: temperature 맞추기가 발산하면 1.0(보정 없음)으로 둠 (가짜 데이터 시험에서 발견, 기존 결과에는 해당 없음)
 
+## 24. 소견 확장 — 자료 확인 (약점 ③, 2026-11-28, 결과를 보기 전에 규칙 고정. scripts/count_more_findings.py)
+
+- 후보: REFLACX phase 2·3 label 중 무기폐(Atelectasis), 경화(Consolidation), 폐결절·종괴(Lung nodule or mass), 기흉(Pneumothorax),
+  폐기종(High lung volume / emphysema), 간질성 폐질환(Interstitial lung disease), 간유리 음영(Groundglass opacity),
+  폐문 확대(Enlarged hilum), 종격동 윤곽 이상(Abnormal mediastinal contour), 급성 골절(Acute fracture)
+- 세는 것: ① REFLACX 영상 양성 수(확신도 ≥ 3, 과반수, split별. EGD 영상은 이 label이 없어 제외)
+  ② train 양성 판독 중 그 소견 단어를 말한 비율 (소견별 시선 지도 coverage) ③ 외부 7곳 양성 수 (CheXpert·VinDr·PadChest label 대응)
+- 확장 후보 규칙: train 양성 ≥ 150, val·test 양성 각 ≥ 30, coverage ≥ 70%, 외부 병원 2곳 이상에서 데이터 하나라도 양성 ≥ 50
+- 후보가 정해지면 학습(c1_none·fs·fs_shuffled, 확장 소견별 시선 지도)·평가 계획을 별도로 고정 (GPU는 23절이 끝난 뒤)
+- 참고: phase 1(5명 판독 109장, 모두 test)은 label 이름이 달라(Nodule·Mass 분리 등) 일부 소견 test 양성이 적게 셀 수 있음
+
 ## 앞으로의 순서 (2026-11-22 결정: 현재 결과 최대한 강화 + 다른 구조로 반복(B))
 1. 12절 판별력 외부 검증 확장 + 통합 (완료)
 2. 13절 정보 수준별 베이지안 재보정 (2026-11-22 사용자 결정: 프로토콜 한계 해결 권장 순서 1)
